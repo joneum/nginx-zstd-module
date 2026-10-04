@@ -50,9 +50,23 @@ END
     fi
 else
     # auto-discovery
+    ngx_zstd_sys_I=
+    ngx_zstd_sys_L=
+
+    # FreeBSD and the other ports-based systems keep zstd.h and
+    # libzstd under /usr/local, where the compiler does not look on
+    # its own.  Without this the probe below fails on a machine that
+    # has zstd installed, and the only way out was to set ZSTD_INC
+    # and ZSTD_LIB by hand.
+    if [ ! -f /usr/include/zstd.h ] && [ -f /usr/local/include/zstd.h ]; then
+        ngx_zstd_sys_I="-I/usr/local/include"
+        ngx_zstd_sys_L="-L/usr/local/lib"
+        ngx_feature_path=/usr/local/include
+    fi
+
     ngx_feature="ZStandard static library"
-    ngx_zstd_opt_I="-DZSTD_STATIC_LINKING_ONLY"
-    ngx_zstd_opt_L="-l:libzstd.a"
+    ngx_zstd_opt_I="$ngx_zstd_sys_I -DZSTD_STATIC_LINKING_ONLY"
+    ngx_zstd_opt_L="$ngx_zstd_sys_L -l:libzstd.a"
 
     # still we consider the static library firstly
     SAVED_CC_TAST_FLAGS=$CC_TEST_FLAGS
@@ -69,7 +83,7 @@ else
     if [ $ngx_found = no ]; then
 
         ngx_feature="ZStandard dynamic library"
-        ngx_zstd_opt_L="-lzstd"
+        ngx_zstd_opt_L="$ngx_zstd_sys_L -lzstd"
         SAVED_CC_TAST_FLAGS=$CC_TEST_FLAGS
         CC_TEST_FLAGS="$ngx_zstd_opt_I $CC_TEST_FLAGS"
         SAVED_NGX_TEST_LD_OPT=$NGX_TEST_LD_OPT
