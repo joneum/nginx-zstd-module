@@ -390,6 +390,7 @@ ngx_http_zstd_filter_compress(ngx_http_request_t *r, ngx_http_zstd_ctx_t *ctx)
 {
     size_t        rc, pos_in, pos_out;
     char         *hint;
+    ngx_uint_t    end;
     ngx_chain_t  *cl;
     ngx_buf_t    *b;
 
@@ -440,6 +441,10 @@ ngx_http_zstd_filter_compress(ngx_http_request_t *r, ngx_http_zstd_ctx_t *ctx)
     ctx->out_buf->last += ctx->buffer_out.pos - pos_out;
     ctx->redo = 0;
 
+    /* the frame is complete only when ZSTD_endStream() has flushed it all */
+
+    end = (rc == 0 && ctx->action == NGX_HTTP_ZSTD_FILTER_END);
+
     if (rc > 0) {
         if (ctx->action == NGX_HTTP_ZSTD_FILTER_COMPRESS) {
             ctx->action = NGX_HTTP_ZSTD_FILTER_FLUSH;
@@ -447,19 +452,62 @@ ngx_http_zstd_filter_compress(ngx_http_request_t *r, ngx_http_zstd_ctx_t *ctx)
 
         ctx->redo = 1;
 
-    } else if (ctx->last && ctx->action != NGX_HTTP_ZSTD_FILTER_END) {
+    } else if (ctx->last && ctx->action != NGX_HTTP_ZSTD_FILTER_END
+               && ctx->buffer_in.pos == ctx->buffer_in.size)
+    {
+        /* end the frame only after the whole input has been consumed */
+
         ctx->redo = 1;
         ctx->action = NGX_HTTP_ZSTD_FILTER_END;
 
         /* pending to call the ZSTD_endStream() */
 
-        return NGX_AGAIN;
+        if (ctx->buffer_out.pos < ctx->buffer_out.size) {
+            return NGX_AGAIN;
+        }
+
+        /*
+         * the output buffer is full: pass it downstream now, otherwise
+         * ngx_http_zstd_filter_get_buf() replaces it and the data is lost
+         */
 
     } else {
         ctx->action = NGX_HTTP_ZSTD_FILTER_COMPRESS; /* restore */
     }
 
     if (ngx_buf_size(ctx->out_buf) == 0) {
+
+        if (rc == 0 && ctx->flush) {
+
+            /*
+             * nothing to flush: pass an empty flush buf downstream,
+             * as the gzip filter does; otherwise ctx->flush is never
+             * reset and the body filter loops forever
+             */
+
+            b = ngx_calloc_buf(r->pool);
+            if (b == NULL) {
+                return NGX_ERROR;
+            }
+
+            b->flush = 1;
+
+            cl = ngx_alloc_chain_link(r->pool);
+            if (cl == NULL) {
+                return NGX_ERROR;
+            }
+
+            cl->buf = b;
+            cl->next = NULL;
+
+            *ctx->last_out = cl;
+            ctx->last_out = &cl->next;
+
+            ctx->flush = 0;
+
+            r->connection->buffered &= ~NGX_HTTP_GZIP_BUFFERED;
+        }
+
         return NGX_AGAIN;
     }
 
@@ -470,13 +518,13 @@ ngx_http_zstd_filter_compress(ngx_http_request_t *r, ngx_http_zstd_ctx_t *ctx)
 
     b = ctx->out_buf;
 
-    if (rc == 0 && (ctx->flush || ctx->last)) {
+    if (rc == 0 && (ctx->flush || end)) {
         r->connection->buffered &= ~NGX_HTTP_GZIP_BUFFERED;
 
         b->flush = ctx->flush;
-        b->last_buf = ctx->last;
+        b->last_buf = end;
 
-        ctx->done = ctx->last;
+        ctx->done = end;
         ctx->flush = 0;
     }
 
@@ -490,7 +538,7 @@ ngx_http_zstd_filter_compress(ngx_http_request_t *r, ngx_http_zstd_ctx_t *ctx)
 
     ngx_memzero(&ctx->buffer_out, sizeof(ZSTD_outBuffer));
 
-    return ctx->last && rc == 0 ? NGX_OK : NGX_AGAIN;
+    return end ? NGX_OK : NGX_AGAIN;
 }
 
 
