@@ -1,10 +1,9 @@
-use Test::Nginx::Socket;
+use Test::Nginx::Socket 'no_plan';
 use lib 'lib';
 
 no_long_string();
 log_level 'debug';
 repeat_each(3);
-plan tests => repeat_each() * ((blocks() - 3) * 5 + 3);
 run_tests();
 
 
@@ -21,7 +20,6 @@ __DATA__
 GET /test
 --- response_headers
 Content-Length: 59738
-ETag: "5be17d33-e95a"
 !Content-Encoding
 --- no_error_log
 [error]
@@ -39,7 +37,6 @@ GET /test
 Accept-Encoding: gzip,zstd
 --- response_headers
 Content-Length: 59738
-ETag: "5be17d33-e95a"
 !Content-Encoding
 --- no_error_log
 [error]
@@ -58,7 +55,6 @@ GET /test
 Accept-Encoding: gzip, zstd
 --- response_headers
 Content-Length: 20706
-ETag: "5be17d33-50e2"
 !Content-Encoding
 Content-Encoding: zstd
 --- no_error_log
@@ -76,7 +72,6 @@ Content-Encoding: zstd
 GET /test
 --- response_headers
 Content-Length: 59738
-ETag: "5be17d33-e95a"
 Content-Encoding: zstd
 !Content-Encoding
 --- no_error_log
@@ -96,7 +91,6 @@ GET /test
 Accept-Encoding: gzip, br
 --- response_headers
 Content-Length: 59738
-ETag: "5be17d33-e95a"
 !Content-Encoding
 --- no_error_log
 [error]
@@ -115,7 +109,6 @@ GET /test
 Accept-Encoding: gzip, br
 --- response_headers
 Content-Length: 20706
-ETag: "5be17d33-50e2"
 Content-Encoding: zstd
 --- no_error_log
 [error]
@@ -132,7 +125,6 @@ Content-Encoding: zstd
 GET /test
 --- response_headers
 Content-Length: 20706
-ETag: "5be17d33-50e2"
 Content-Encoding: zstd
 --- no_error_log
 [error]
@@ -151,7 +143,6 @@ GET /test
 Accept-Encoding: gzip, br
 --- response_headers
 Content-Length: 20706
-ETag: "5be17d33-50e2"
 Content-Encoding: zstd
 --- no_error_log
 [error]

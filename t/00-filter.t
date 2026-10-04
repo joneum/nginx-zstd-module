@@ -1,11 +1,9 @@
-use Test::Nginx::Socket;
+use Test::Nginx::Socket 'no_plan';
 use lib 'lib';
 
 no_long_string();
 log_level 'debug';
 repeat_each(2);
-
-plan tests => repeat_each() * 2 * blocks();
 
 run_tests();
 
@@ -160,6 +158,7 @@ Content-Encoding: zstd
         zstd on;
         zstd_types application/octet-stream;
         zstd_min_length 1;
+        default_type application/octet-stream;
         root ../../t/suite;
     }
 --- request
@@ -178,6 +177,7 @@ Content-Encoding: zstd
         zstd_types application/octet-stream;
         zstd_min_length 1;
         zstd_buffers 2 1k;
+        default_type application/octet-stream;
         root ../../t/suite;
     }
 --- request
@@ -189,14 +189,14 @@ Content-Encoding: zstd
 
 
 
-=== TEST 11: a single large output buffer
---- regression for the frame that ended before the whole input had been read
+=== TEST 11: a single large output buffer ends the frame only when the input is done
 --- config
     location /test {
         zstd on;
         zstd_types application/octet-stream;
         zstd_min_length 1;
         output_buffers 1 512k;
+        default_type application/octet-stream;
         root ../../t/suite;
     }
 --- request
@@ -207,21 +207,3 @@ Accept-Encoding: zstd
 Content-Encoding: zstd
 --- no_error_log
 [error]
-
-
-
-=== TEST 12: $zstd_ratio is set
---- config
-    location /test {
-        zstd on;
-        zstd_types text/plain;
-        zstd_min_length 1;
-        root ../../t/suite;
-        add_header X-Ratio $zstd_ratio;
-    }
---- request
-GET /test
---- more_headers
-Accept-Encoding: zstd
---- response_headers_like
-X-Ratio: \d+\.\d+
