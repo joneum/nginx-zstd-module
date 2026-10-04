@@ -117,6 +117,25 @@ jobs:
           fi
           echo "no libzstd on the static module"
 
+  roundtrip:
+    name: decompressed output matches the original
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libpcre2-dev zlib1g-dev libssl-dev libzstd-dev zstd
+
+      - name: Build nginx
+        run: ci/build.sh 1.31.5 "$HOME/nginx"
+
+      - name: Serve many sizes and compare
+        run: ci/roundtrip.sh "$HOME/nginx/sbin/nginx"
+
   freebsd:
     name: FreeBSD
     runs-on: ubuntu-latest
@@ -139,6 +158,7 @@ jobs:
             # name here, it is in wheel
             TEST_NGINX_WORKER_USER='root wheel' \
               TEST_NGINX_BINARY="$HOME/nginx/sbin/nginx" prove -r t/
+            ci/roundtrip.sh "$HOME/nginx/sbin/nginx"
 
   valgrind:
     name: valgrind
