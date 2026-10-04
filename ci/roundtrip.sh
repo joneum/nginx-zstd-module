@@ -44,7 +44,18 @@ while read -r n; do
 		dd if=/dev/urandom of="$WORK/html/s$n.bin" bs=1 count="$n" 2> /dev/null
 done < "$WORK/sizes"
 
+# nginx drops the worker to "nobody" by default, and that user cannot
+# read a work directory under a home that is not world traversable.
+# Where this runs as root, which it does in the FreeBSD job, keep the
+# worker as root.  The group differs per system, wheel here and root
+# there, so ask for it.
+ngx_user=
+if [ "$(id -u)" = 0 ]; then
+	ngx_user="user root $(id -gn);"
+fi
+
 cat > "$WORK/conf/nginx.conf" <<EOF
+$ngx_user
 worker_processes 1;
 error_log $WORK/logs/error.log error;
 pid $WORK/logs/nginx.pid;
