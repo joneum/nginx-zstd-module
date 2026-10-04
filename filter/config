@@ -110,6 +110,12 @@ END
     # TODO we need more tries for the different OS port.
 fi
 
+# ZSTD_createCStream_advanced() and ZSTD_createCDict_byReference() are
+# only declared when ZSTD_STATIC_LINKING_ONLY is defined, and this
+# module calls both.  The flag used to reach the compiler through the
+# static module's config fragment, which meant the filter did not build
+# without it.
+CFLAGS="$ngx_zstd_opt_I $CFLAGS"
 NGX_LD_OPT="$ngx_zstd_opt_L $NGX_LD_OPT"
 
 HTTP_ZSTD_SRCS="$ngx_addon_dir/src/ngx_http_zstd_filter_module.c"
