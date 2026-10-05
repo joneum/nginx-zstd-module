@@ -105,7 +105,7 @@ make install
 for trying a patch out:
 
 ```
-ci/build.sh 1.31.5 /tmp/nginx-test
+ci/build.sh 1.31.6 /tmp/nginx-test
 /tmp/nginx-test/sbin/nginx -V
 ```
 
@@ -232,9 +232,9 @@ out.  Empty where nothing was compressed.
 Compatibility
 =============
 
-The test suite runs against nginx 1.22.0, 1.24.0, 1.26.3, 1.28.0 and
-1.31.5, on Linux and on FreeBSD, and the modules build on everything in
-between.  Zstandard 1.4.0 and newer.
+The test suite runs against nginx 1.22.0, 1.24.0, 1.26.3, 1.28.0, 1.30.5
+and 1.31.6, on Linux and on FreeBSD, and the modules build on everything
+in between.  Zstandard 1.4.0 and newer.
 
 Test Suite
 ==========
@@ -243,7 +243,7 @@ The suite is written against
 [Test::Nginx](https://metacpan.org/pod/Test::Nginx):
 
 ```
-ci/build.sh 1.31.5 /tmp/nginx-test
+ci/build.sh 1.31.6 /tmp/nginx-test
 TEST_NGINX_BINARY=/tmp/nginx-test/sbin/nginx prove -r t/
 ```
 
