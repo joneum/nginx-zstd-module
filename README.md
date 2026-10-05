@@ -271,7 +271,7 @@ Authors
 
 Alex Zhang (张超) &lt;zchao1995@gmail.com&gt;, UPYUN Inc., wrote the modules.
 
-This fork is maintained by Jochen Neumeister &lt;joneum@FreeBSD.org&gt;,
+This repository is maintained by Jochen Neumeister &lt;joneum@FreeBSD.org&gt;,
 who also maintains the nginx ports in FreeBSD.
 
 Copyright & License
@@ -279,4 +279,7 @@ Copyright & License
 
 Copyright (c) 2018, Alex Zhang.
 
-Licensed under the BSD 2-Clause License, see [LICENSE](LICENSE).
+Copyright (c) 2026, Jochen Neumeister &lt;joneum@FreeBSD.org&gt;.
+
+Licensed under the BSD 2-Clause License.  The full text, with both
+lines, is in [LICENSE](LICENSE).
