@@ -33,8 +33,7 @@ Table of Contents
 * [Test Suite](#test-suite)
 * [Source Repository](#source-repository)
 * [Bugs and Patches](#bugs-and-patches)
-* [Authors](#authors)
-* [Copyright & License](#copyright--license)
+* [License](#license)
 
 Description
 ===========
@@ -252,10 +251,6 @@ Source Repository
 
 https://github.com/joneum/nginx-zstd-module
 
-This is a maintained fork of
-[tokers/zstd-nginx-module](https://github.com/tokers/zstd-nginx-module),
-which has taken no change to its code since April 2024.
-
 Bugs and Patches
 ================
 
@@ -263,23 +258,7 @@ Please report them through the [issue
 tracker](https://github.com/joneum/nginx-zstd-module/issues) or send a
 pull request.
 
-What is open at the repository this one was forked from, and where
-this fork stands on each of it, is in [UPSTREAM.md](UPSTREAM.md).
-
-Authors
+License
 =======
 
-Alex Zhang (张超) &lt;zchao1995@gmail.com&gt;, UPYUN Inc., wrote the modules.
-
-This repository is maintained by Jochen Neumeister &lt;joneum@FreeBSD.org&gt;,
-who also maintains the nginx ports in FreeBSD.
-
-Copyright & License
-===================
-
-Copyright (c) 2018, Alex Zhang.
-
-Copyright (c) 2026, Jochen Neumeister &lt;joneum@FreeBSD.org&gt;.
-
-Licensed under the BSD 2-Clause License.  The full text, with both
-lines, is in [LICENSE](LICENSE).
+BSD 2-Clause, see [LICENSE](LICENSE).

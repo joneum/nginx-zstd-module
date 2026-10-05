@@ -1,58 +1,14 @@
-# Prerequisites
-*.d
+# created by the test suite
+t/servroot/
 
-# Object files
-*.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-t/servroot/*
+# created by ci/build.sh, ci/roundtrip.sh
+ci-work/
 
 # leftovers from patch(1)
 *.orig
 *.rej
+
+# editor leftovers
+*~
+*.swp
+*.swo
