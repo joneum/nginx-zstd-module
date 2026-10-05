@@ -19,7 +19,7 @@ __DATA__
 --- request
 GET /test
 --- response_headers
-Content-Length: 59738
+Content-Length: 63996
 !Content-Encoding
 --- no_error_log
 [error]
@@ -36,7 +36,7 @@ Content-Length: 59738
 GET /test
 Accept-Encoding: gzip,zstd
 --- response_headers
-Content-Length: 59738
+Content-Length: 63996
 !Content-Encoding
 --- no_error_log
 [error]
@@ -54,7 +54,7 @@ GET /test
 --- more_headers
 Accept-Encoding: gzip, zstd
 --- response_headers
-Content-Length: 20706
+Content-Length: 17972
 !Content-Encoding
 Content-Encoding: zstd
 --- no_error_log
@@ -71,7 +71,7 @@ Content-Encoding: zstd
 --- request
 GET /test
 --- response_headers
-Content-Length: 59738
+Content-Length: 63996
 Content-Encoding: zstd
 !Content-Encoding
 --- no_error_log
@@ -90,7 +90,7 @@ GET /test
 --- more_headers
 Accept-Encoding: gzip, br
 --- response_headers
-Content-Length: 59738
+Content-Length: 63996
 !Content-Encoding
 --- no_error_log
 [error]
@@ -108,7 +108,7 @@ GET /test
 --- more_headers
 Accept-Encoding: gzip, br
 --- response_headers
-Content-Length: 20706
+Content-Length: 17972
 Content-Encoding: zstd
 --- no_error_log
 [error]
@@ -124,7 +124,7 @@ Content-Encoding: zstd
 --- request
 GET /test
 --- response_headers
-Content-Length: 20706
+Content-Length: 17972
 Content-Encoding: zstd
 --- no_error_log
 [error]
@@ -142,7 +142,7 @@ GET /test
 --- more_headers
 Accept-Encoding: gzip, br
 --- response_headers
-Content-Length: 20706
+Content-Length: 17972
 Content-Encoding: zstd
 --- no_error_log
 [error]

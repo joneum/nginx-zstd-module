@@ -1,2040 +1,1028 @@
-<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
-"http://www.w3.org/TR/html4/loose.dtd">
-<html>
-<head>
-<meta http-equiv="content-type" content="text/html; charset=UTF-8">
-<title>Regular Expression Matching Can Be Simple And Fast</title>
-<style type="text/css"><!--
-body {
-	background-color: white;
-	color: black;
-	font-family: serif;
-	font-size: medium;
-	line-height: 1.2em;
-	margin-left: 0.5in;
-	margin-right: 0.5in;
-	margin-top: 0;
-	margin-bottom: 0;
-}
-
-p.lp {
-	text-indent: 0in;
-	text-align: justify;
-}
-
-p.lp-left {
-	text-indent: 0in;
-	text-align: left;
-}
-
-p.tlp {
-	text-indent: 0in;
-	text-align: justify;
-	margin-top: 0.25in;
-}
-
-p.pp {
-	text-indent: 0.35in;
-	text-align: justify;
-}
-
-code {
-	font-family: monospace;
-	font-size: medium;
-}
-
-h2.sh {
-	text-indent: 0in;
-	text-align: left;
-	margin-top: 2em;
-	margin-bottom: 0.05in;
-	font-weight: bold;
-	font-size: medium
-}
-
-p.fig {
-	text-align: center;
-}
-
-div.fig {
-	text-align: center;
-	margin-left: -0.5in;
-	margin-right: -0.5in;
-}
-
-.box {
-	border-style: dashed;
-	border-width: 1px;
-}
-
-pre.p1 {
-	text-indent: 0in;
-	text-align: left;
-	line-height: 1.1em;
-	font-size: 0.9em;
-	margin-left: 0.5in;
-	margin-right: 0.5in;
-	margin-top: 0;
-	margin-bottom: 0;
-}
-
-h1.tl {
-	font-weight: bold;
-	font-size: medium;
-	text-align: center;
-	margin-top: 3em;
-}
-
-h2.au {
-	font-weight: normal;
-	font-size: medium;
-	text-align: center;
-	margin-top: 1.5em;
-	margin-bottom: 3em;
-}
-
-p.copy {
-	text-align: center;
-	text-indent: 0in;
-	margin-top: 3em;
-	margin-bottom: 3em;
-	font-size: small;
-}
-
---></style>
-</head>
-<body>
-
-<h1 class=tl>
-Regular Expression Matching Can Be Simple And Fast
-<br>
-(but is slow in Java, Perl, PHP, Python, Ruby, ...)
-</h1>
-<h2 class=au>
-<a href="http://swtch.com/~rsc/">Russ Cox</a>
-<br>
-<i>rsc@swtch.com</i>
-<br>
-January 2007
-<br>
-<a href="https://plus.google.com/116810148281701144465" rel="author"><IMG src="http://www.google.com/images/icons/ui/gprofile_button-16.png" WIDTH="16" HEIGHT="16"></a> <g:plusone size="small" annotation="none"></g:plusone>
-</h2>
-
-
-<h2 class=sh>Introduction</h2>
-
-<p class=pp>
-This is a tale of two approaches to regular expression matching.
-One of them is in widespread use in the
-standard interpreters for many languages, including Perl.
-The other is used only in a few places, notably most implementations
-of awk and grep.
-The two approaches have wildly different
-performance characteristics:
-</p>
-
-<div class=fig>
-<center>
-<table cellspacing=0 cellpadding=0 border=0>
-<tr><td valign=bottom><img src=grep3p.png alt="Perl graph" width="301" height="148"><td width=20><td valign=bottom><img src=grep4p.png alt="Thompson NFA graph" width="301" height="148">
-<tr><td height=10>
-<tr><td colspan=3 align=center>
-Time to match <code>a?</code><sup><i>n</i></sup><code>a</code><sup><i>n</i></sup> against <code>a</code><sup><i>n</i></sup>
-</table>
-</center>
-</div>
-
-<p class=lp>
-Let's use superscripts to denote string repetition,
-so that 
-<code>a?<sup>3</sup>a<sup>3</sup></code>
-is shorthand for
-<code>a?a?a?aaa</code>.
-The two graphs plot the time required by each approach
-to match the regular expression 
-<code>a?</code><sup><i>n</i></sup><code>a</code><sup><i>n</i></sup>
-against the string <code>a</code><sup><i>n</i></sup>.
-</p>
-
-<p class=pp>
-Notice that Perl requires over sixty seconds to match
-a 29-character string.
-The other approach, labeled Thompson NFA for
-reasons that will be explained later,
-requires twenty <i>microseconds</i> to match the string.
-That's not a typo.  The Perl graph plots time in seconds,
-while the Thompson NFA graph plots time in microseconds:
-the Thompson NFA implementation
-is a million times faster than Perl
-when running on a miniscule 29-character string.
-The trends shown in the graph continue: the
-Thompson NFA handles a 100-character string in under 200 microseconds,
-while Perl would require over 10<sup>15</sup> years.
-(Perl is only the most conspicuous example of a large
-number of popular programs that use the same algorithm;
-the above graph could have been Python, or PHP, or Ruby,
-or many other languages.  A more detailed
-graph later in this article presents data for other implementations.)
-</p>
-
-<p class=pp>
-It may be hard to believe the graphs: perhaps you've used Perl,
-and it never seemed like regular expression matching was
-particularly slow.
-Most of the time, in fact, regular expression matching in Perl
-is fast enough.  
-As the graph shows, though, it is possible
-to write so-called &ldquo;pathological&rdquo; regular expressions that
-Perl matches very <i>very</i> slowly.
-In contrast, there are no regular expressions that are 
-pathological for the Thompson NFA implementation.
-Seeing the two graphs side by side prompts the question, 
-&ldquo;why doesn't Perl use the Thompson NFA approach?&rdquo;
-It can, it should, and that's what the rest of this article is about.
-</p>
-
-<p class=pp>
-Historically, regular expressions are one of computer science's
-shining examples of how using good theory leads to good programs.
-They were originally developed by theorists as a
-simple computational model,
-but Ken Thompson introduced them to
-programmers in his implementation of the text editor QED
-for CTSS.
-Dennis Ritchie followed suit in his own implementation
-of QED, for GE-TSS.
-Thompson and Ritchie would go on to create Unix,
-and they brought regular expressions with them.
-By the late 1970s, regular expressions were a key
-feature of the Unix landscape, in tools such as
-ed, sed, grep, egrep, awk, and lex.
-</p>
-
-<p class=pp>
-Today, regular expressions have also become a shining
-example of how ignoring good theory leads to bad programs.
-The regular expression implementations used by
-today's popular tools are significantly slower
-than the ones used in many of those thirty-year-old Unix tools.
-</p>
-
-<p class=pp>
-This article reviews the good theory: 
-regular expressions, finite automata, 
-and a regular expression search algorithm
-invented by Ken Thompson in the mid-1960s.
-It also puts the theory into practice, describing 
-a simple implementation of Thompson's algorithm.
-That implementation, less than 400 lines of C,
-is the one that went head to head with Perl above.
-It outperforms the more complex real-world
-implementations used by
-Perl, Python, PCRE, and others.
-The article concludes with a discussion of how 
-theory might yet be converted into practice
-in the real-world implementations.
-</p>
-
-<h2 class=sh>
-Regular Expressions
-</h2>
-
-
-<p class=pp>
-Regular expressions are a notation for
-describing sets of character strings.
-When a particular string is in the set
-described by a regular expression,
-we often say that the regular expression
-<i>matches</i>
-the string.
-</p>
-
-<p class=pp>
-The simplest regular expression is a single literal character.
-Except for the special metacharacters 
-<code>*+?()|</code>,
-characters match themselves.
-To match a metacharacter, escape it with
-a backslash:
-<code>\+</code>
-matches a literal plus character.
-</p>
-
-<p class=pp>
-Two regular expressions can be alternated or concatenated to form a new
-regular expression:
-if <i>e</i><sub>1</sub> matches
-<i>s</i>
-and <i>e</i><sub>2</sub> matches
-<i>t</i>,
-then <i>e</i><sub>1</sub><code>|</code><i>e</i><sub>2</sub> matches
-<i>s</i>
-or
-<i>t</i>,
-and
-<i>e</i><sub>1</sub><i>e</i><sub>2</sub>
-matches 
-<i>st</i>.
-</p>
-
-<p class=pp>
-The metacharacters
-<code>*</code>,
-<code>+</code>,
-and
-<code>?</code>
-are repetition operators:
-<i>e</i><sub>1</sub><code>*</code>
-matches a sequence of zero or more (possibly different)
-strings, each of which match <i>e</i><sub>1</sub>;
-<i>e</i><sub>1</sub><code>+</code>
-matches one or more; 
-<i>e</i><sub>1</sub><code>?</code>
-matches zero or one.
-</p>
-
-<p class=pp>
-The operator precedence, from weakest to strongest binding, is
-first alternation, then concatenation, and finally the
-repetition operators.
-Explicit parentheses can be used to force different meanings,
-just as in arithmetic expressions.
-Some examples:
-<code>ab|cd</code>
-is equivalent to
-<code>(ab)|(cd)</code>;
-<code>ab*</code>
-is equivalent to
-<code>a(b*)</code>.
-</p>
-
-<p class=pp>
-The syntax described so far is a subset of the traditional Unix
-egrep
-regular expression syntax.
-This subset suffices to describe all regular
-languages: loosely speaking, a regular language is a set
-of strings that can be matched in a single pass through
-the text using only a fixed amount of memory.
-Newer regular expression facilities (notably Perl and
-those that have copied it) have added 
-<a href="http://www.perl.com/doc/manual/html/pod/perlre.html">many new operators
-and escape sequences</a>.  These additions make the regular
-expressions more concise, and sometimes more cryptic, but usually
-not more powerful:
-these fancy new regular expressions almost always have longer
-equivalents using the traditional syntax.
-</p>
-
-<p class=pp>
-One common regular expression extension that 
-does provide additional power is called
-<i>backreferences</i>.
-A backreference like
-<code>\1</code>
-or
-<code>\2</code>
-matches the string matched
-by a previous parenthesized expression, and only that string:
-<code>(cat|dog)\1</code>
-matches
-<code>catcat</code>
-and
-<code>dogdog</code>
-but not
-<code>catdog</code>
-nor
-<code>dogcat</code>.
-As far as the theoretical term is concerned,
-regular expressions with backreferences
-are not regular expressions.
-The power that backreferences add comes at great cost:
-in the worst case, the best known implementations require
-exponential search algorithms,
-like the one Perl uses.
-Perl (and the other languages)
-could not now remove backreference support,
-of course, but they could employ much faster algorithms
-when presented with regular expressions that don't have
-backreferences, like the ones considered above.
-This article is about those faster algorithms.
-</p>
-
-<h2 class=sh>
-Finite Automata
-</h2>
-
-
-
-<p class=pp>
-Another way to describe sets of character strings is with
-finite automata.
-Finite automata are also known as state machines,
-and we will use &ldquo;automaton&rdquo; and &ldquo;machine&rdquo; interchangeably.
-</p>
-
-<p class=pp>
-As a simple example, here is a machine recognizing
-the set of strings matched by the regular expression
-<code>a(bb)+a</code>:
-</p>
-
-<p class=fig><img src=fig0.png alt="DFA for a(bb)+a" width="278" height="54"></p>
-
-<p class=pp>
-A finite automaton is always in one of its states,
-represented in the diagram by circles.
-(The numbers inside the circles are labels to make this
-discussion easier; they are not part of the machine's operation.)
-As it reads the string, it switches from state to state.
-This machine has two special states: the start state <i>s</i><sub>0</sub>
-and the matching state <i>s</i><sub>4</sub>.
-Start states are depicted with lone arrowheads pointing at them,
-and matching states are drawn as a double circle.
-</p>
-
-<p class=pp>
-The machine reads an input string one character at a time,
-following arrows corresponding to the input to move from
-state to state.
-Suppose the input string is
-<code>abbbba</code>.
-When the machine reads the first letter of the string, the
-<code>a</code>,
-it is in the start state <i>s</i><sub>0</sub>.  It follows the
-<code>a</code>
-arrow to state <i>s</i><sub>1</sub>.
-This process repeats as the machine reads the rest of the string:
-<code>b</code>
-to
-<code><i>s</i><sub>2</sub></code>,
-<code>b</code>
-to
-<code><i>s</i><sub>3</sub></code>,
-<code>b</code>
-to
-<code><i>s</i><sub>2</sub></code>,
-<code>b</code>
-to
-<code><i>s</i><sub>3</sub></code>,
-and finally
-<code>a</code>
-to
-<code><i>s</i><sub>4</sub></code>.
-</p>
-<p class=fig><img src=fig1.png alt="DFA execution on abbbba" width="357" height="426"></p>
-<p class=lp>
-The machine ends in <i>s</i><sub>4</sub>, a matching state, so it
-matches the string.
-If the machine ends in a non-matching state, it does not 
-match the string.
-If, at any point during the machine's execution, there is no
-arrow for it to follow corresponding to the current
-input character, the machine stops executing early.
-</p>
-
-<p class=pp>
-The machine we have been considering is called a
-<i>deterministic</i>
-finite automaton (DFA),
-because in any state, each possible input letter
-leads to at most one new state.
-We can also create machines
-that must choose between multiple possible next states.
-For example, this machine is equivalent to the previous
-one but is not deterministic:
-</p>
-<p class=fig><img src=fig2.png alt="NFA for a(bb)+a" width="278" height="54"></p>
-<p class=lp>
-The machine is not deterministic because if it reads a
-<code>b</code>
-in state <i>s</i><sub>2</sub>, it has multiple choices for the next state:
-it can go back to <i>s</i><sub>1</sub> in hopes of seeing another
-<code>bb</code>,
-or it can go on to <i>s</i><sub>3</sub> in hopes of seeing the final
-<code>a</code>.
-Since the machine cannot peek ahead to see the rest of
-the string, it has no way to know which is the correct decision.
-In this situation, it turns out to be interesting to
-let the machine
-<i>always guess correctly</i>.
-Such machines are called non-deterministic finite automata
-(NFAs or NDFAs).
-An NFA matches an input string if there is some way 
-it can read the string and follow arrows to a matching state.
-</p>
-
-<p class=pp>
-Sometimes it is convenient to let NFAs have arrows with no
-corresponding input character.  We will leave these arrows unlabeled.
-An NFA can, at any time, choose to follow an unlabeled arrow
-without reading any input.
-This NFA is equivalent to the previous two, but the unlabeled arrow
-makes the correspondence with
-<code>a(bb)+a</code>
-clearest:
-</p>
-<p class=fig><img src=fig3.png alt="Another NFA for a(bb)+a" width="278" height="39"></p>
-
-<h2 class=sh>
-Converting Regular Expressions to NFAs
-</h2>
-
-<p class=pp>
-Regular expressions and NFAs turn out to be exactly
-equivalent in power: every regular expression has an
-equivalent NFA (they match the same strings) and vice versa.
-(It turns out that DFAs are also equivalent in power 
-to NFAs and regular expressions; we will see this later.)
-There are multiple ways to translate regular expressions into NFAs.
-The method described here was first described by Thompson
-in his 1968 CACM paper.
-</p>
-
-<p class=pp>
-The NFA for a regular expression is built up from partial NFAs
-for each subexpression, with a different construction for
-each operator.  The partial NFAs have
-no matching states: instead they have one or more dangling arrows,
-pointing to nothing.  The construction process will finish by
-connecting these arrows to a matching state.
-</p>
-
-<p class=pp>
-The NFAs for matching single characters look like:
-</p>
-<p class=fig><img src=fig4.png alt="Single-character NFA" width="113" height="21"></p>
-<p class=lp>
-The NFA for the concatenation <i>e</i><sub>1</sub><i>e</i><sub>2</sub>
-connects the final arrow of the <i>e</i><sub>1</sub> 
-machine to the start of the <i>e</i><sub>2</sub> machine:
-</p>
-<p class=fig><img src=fig5.png alt="Concatenation NFA" width="242" height="20"></p>
-<p class=lp>
-The NFA for the alternation <i>e</i><sub>1</sub><code>|</code><i>e</i><sub>2</sub>
-adds a new start state with a choice of either the
-<i>e</i><sub>1</sub> machine or the <i>e</i><sub>2</sub> machine.
-</p>
-<p class=fig><img src=fig6.png alt="Alternation NFA" width="202" height="62"></p>
-<p class=lp>
-The NFA for <i>e</i><code>?</code> alternates the <i>e</i> machine with an empty path:
-</p>
-<p class=fig><img src=fig7.png alt="Zero or one NFA" width="184" height="56"></p>
-<p class=lp>
-The NFA for <i>e</i><code>*</code> uses the same alternation but loops a 
-matching <i>e</i> machine back to the start:
-</p>
-<p class=fig><img src=fig8.png alt="Zero or more NFA" width="184" height="56"></p>
-<p class=lp>
-The NFA for <i>e</i><code>+</code> also creates a loop, but one that
-requires passing through <i>e</i> at least once:
-</p>
-<p class=fig><img src=fig9.png alt="One or more NFA" width="190" height="41"></p>
-
-<p class=pp>
-Counting the new states in the diagrams above, we can see
-that this technique creates exactly one state per character
-or metacharacter in the regular expression,
-excluding parentheses.
-Therefore the number of states in the final NFA is at most
-equal to the length of the original regular expression.
-</p>
-
-<p class=pp>
-Just as with the example NFA discussed earlier, it is always possible
-to remove the unlabeled arrows, and it is also always possible to generate
-the NFA without the unlabeled arrows in the first place.
-Having the unlabeled arrows makes the NFA easier for us to read
-and understand, and they also make the C representation
-simpler, so we will keep them.
-</p>
-
-<h2 class=sh>
-Regular Expression Search Algorithms
-</h2>
-
-<p class=pp>
-Now we have a way to test whether a regular expression
-matches a string: convert the regular expression to an NFA
-and then run the NFA using the string as input.
-Remember that NFAs are endowed with the ability to guess
-perfectly when faced with a choice of next state:
-to run the NFA using an ordinary computer, we must find
-a way to simulate this guessing.
-</p>
-
-<p class=pp>
-One way to simulate perfect guessing is to guess
-one option, and if that doesn't work, try the other.
-For example, consider the NFA for
-<code>abab|abbb</code>
-run on the string
-<code>abbb</code>:
-</p>
-<p class=fig><img src=fig10.png alt="NFA for abab|abbb" width="364" height="79"></p>
-<p class=fig><img src=fig11.png alt="Backtracking execution on abbb" width="729" height="619"></p>
-<p class=lp>
-At step 0, the NFA must make a choice: try to match
-<code>abab</code>
-or
-try to match
-<code>abbb</code>?
-In the diagram, the NFA tries
-<code>abab</code>,
-but that fails after step 3.
-The NFA then tries the other choice, leading to step 4 and eventually a match.
-This backtracking approach
-has a simple recursive implementation
-but can read the input string many times
-before succeeding.
-If the string does not match,
-the machine must try
-<i>all</i>
-possible execution paths before
-giving up.
-The NFA tried only two different paths in the example,
-but in the worst case, there can be exponentially
-many possible execution paths, leading to very slow run times.
-</p>
-
-<p class=pp>
-A more efficient but more complicated way to simulate perfect
-guessing is to guess both options simultaneously. 
-In this approach, the simulation allows the machine
-to be in multiple states at once.  To process each letter,
-it advances all the states along all the arrows that
-match the letter.
-</p>
-<p class=fig><img src=fig12.png alt="Parallel execution on abbb" width="329" height="511"></p>
-<p class=lp>
-The machine starts in the start state and all the states
-reachable from the start state by unlabeled arrows.
-In steps 1 and 2, the NFA is in two states simultaneously.
-Only at step 3 does the state set narrow down to a single state.
-This multi-state approach tries both paths at the same time,
-reading the input only once.
-In the worst case, the NFA might be in
-<i>every</i>
-state at each step, but this results in at worst a constant amount
-of work independent of the length of the string,
-so arbitrarily
-large input strings can be processed in linear time.
-This is a dramatic improvement over the exponential time
-required by the backtracking approach.
-The efficiency comes from tracking the set of reachable
-states but
-<i>not</i>
-which paths were used to reach them.
-In an NFA with 
-<i>n</i>
-nodes, there can only be 
-<i>n</i>
-reachable states at any step, but there might be
-2<sup><i>n</i></sup> paths through the NFA.
-</p>
-
-<h2 class=sh>
-Implementation
-</h2>
-
-<p class=pp>
-Thompson introduced the multiple-state simulation approach
-in his 1968 paper.
-In his formulation, the states of the NFA were represented
-by small machine-code sequences, and the list of possible states
-was just a sequence of function call instructions.
-In essence, Thompson compiled the regular expression into clever
-machine code.
-Forty years later, computers are much faster and the 
-machine code approach is not as necessary.
-The following sections
-present an implementation written in portable ANSI C.
-The full source code (under 400 lines)
-and the benchmarking scripts are 
-<a href="http://swtch.com/~rsc/regexp/">available online</a>.
-(Readers who are unfamiliar or uncomfortable with C or pointers should
-feel free to read the descriptions and skip over the actual code.)
-</p>
-
-<h2 class=sh id="compiling">
-Implementation: Compiling to NFA
-</h2>
-
-<p class=pp>
-The first step is to compile the regular expression
-into an equivalent NFA.
-In our C program, we will represent an NFA as a
-linked collection of 
-<code>State</code>
-structures:
-</p>
-<pre class=p1>
-struct State
-{
-	int c;
-	State *out;
-	State *out1;
-	int lastlist;
-};
-</pre><p class=lp>
-Each
-<code>State</code>
-represents one of the following three NFA fragments,
-depending on the value of
-<code>c</code>.
-</p>
-<p class=fig><img src=fig13.png alt="Possible per-State NFA fragments" width="340" height="109"></p>
-<p class=lp>
-(<code>Lastlist</code>
-is used during execution and is explained in the next section.)
-</p>
-
-<p class=pp>
-Following Thompson's paper,
-the compiler builds an NFA from a regular expression in
-<i>postfix</i>
-notation with dot
-(<code>.</code>) added
-as an explicit concatenation operator.
-A separate function
-<code>re2post</code>
-rewrites infix regular expressions like
-&ldquo;<code>a(bb)+a</code>&rdquo;
-into equivalent postfix expressions like
-&ldquo;<code>abb.+.a.</code>&rdquo;.
-(A &ldquo;real&rdquo; implementation would certainly
-need to use dot as the &ldquo;any character&rdquo; metacharacter
-rather than as a concatenation operator.
-A real implementation would also probably build the 
-NFA during parsing rather than build an explicit postfix expression.
-However, the postfix version is convenient and follows 
-Thompson's paper more closely.)
-</p>
-
-<p class=pp>
-As the compiler scans the postfix expression, it maintains
-a stack of computed NFA fragments.
-Literals push new NFA fragments onto the stack, while
-operators pop fragments off the stack and then
-push a new fragment.
-For example, 
-after compiling the
-<code>abb</code> in <code>abb.+.a.</code>,
-the stack contains NFA fragments for
-<code>a</code>,
-<code>b</code>,
-and
-<code>b</code>.
-The compilation of the
-<code>.</code>
-that follows pops the two
-<code>b</code>
-NFA fragment from the stack and pushes an NFA fragment for the
-concatenation
-<code>bb.</code>.
-Each NFA fragment is defined by its start state and its
-outgoing arrows:
-</p><pre class=p1>
-struct Frag
-{
-	State *start;
-	Ptrlist *out;
-};
-</pre><p class=lp>
-<code>Start</code>
-points at the start state for the fragment,
-and
-<code>out</code>
-is a list of pointers to 
-<code>State*</code>
-pointers that are not yet connected to anything.
-These are the dangling arrows in the NFA fragment.
-</p>
-
-<p class=pp>
-Some helper functions manipulate pointer lists:
-</p><pre class=p1>
-Ptrlist *list1(State **outp);
-Ptrlist *append(Ptrlist *l1, Ptrlist *l2);
-
-void patch(Ptrlist *l, State *s);
-</pre><p class=lp>
-<code>List1</code>
-creates a new pointer list containing the single pointer
-<code>outp</code>.
-<code>Append</code>
-concatenates two pointer lists, returning the result.
-<code>Patch</code>
-connects the dangling arrows in the pointer list
-<code>l</code>
-to the state
-<code>s</code>:
-it sets
-<code>*outp</code>
-<code>=</code>
-<code>s</code>
-for each pointer
-<code>outp</code>
-in
-<code>l</code>.
-</p>
-
-<p class=pp>
-Given these primitives and a fragment stack,
-the compiler is a simple loop over the postfix expression.
-At the end, there is a single fragment left:
-patching in a matching state completes the NFA.
-</p><pre class=p1>
-State*
-post2nfa(char *postfix)
-{
-	char *p;
-	Frag stack[1000], *stackp, e1, e2, e;
-	State *s;
-
-	#define push(s) *stackp++ = s
-	#define pop()   *--stackp
-
-	stackp = stack;
-	for(p=postfix; *p; p++){
-		switch(*p){
-		/* <i>compilation cases, described below</i> */
-		}
-	}
-	
-	e = pop();
-	patch(e.out, matchstate);
-	return e.start;
-}
-</pre><p class=lp><a id="compile"></a>
-The specific compilation cases mimic the translation 
-steps described earlier.
-</p>
-
-<table cellspacing=0 cellpadding=0 border=0>
-<tr><td><p class=tlp>
-Literal characters:
-</p><pre class=p1>
-default:
-	s = state(*p, NULL, NULL);
-	push(frag(s, list1(&amp;s-&gt;out));
-	break;
-</pre>
-<td><img src=fig14.png alt="" width="61" height="24">
-
-<tr><td><p class=tlp>
-Catenation:
-</p><pre class=p1>
-case '.':
-	e2 = pop();
-	e1 = pop();
-	patch(e1.out, e2.start);
-	push(frag(e1.start, e2.out));
-	break;
-</pre>
-<td><img src=fig15.png alt="" width="182" height="20">
-
-<tr><td><p class=tlp>
-Alternation:
-</p><pre class=p1>
-case '|':
-	e2 = pop();
-	e1 = pop();
-	s = state(Split, e1.start, e2.start);
-	push(frag(s, append(e1.out, e2.out)));
-	break;
-</pre>
-<td><img src=fig16.png alt="" width="140" height="62">
-
-<tr><td><p class=tlp>
-Zero or one:
-</p><pre class=p1>
-case '?':
-	e = pop();
-	s = state(Split, e.start, NULL);
-	push(frag(s, append(e.out, list1(&amp;s-&gt;out1))));
-	break;
-</pre>
-<td><img src=fig17.png alt="" width="140" height="68">
-
-<tr><td><p class=tlp>
-Zero or more:
-</p><pre class=p1>
-case '*':
-	e = pop();
-	s = state(Split, e.start, NULL);
-	patch(e.out, s);
-	push(frag(s, list1(&amp;s-&gt;out1)));
-	break;
-</pre>
-<td><img src=fig18.png alt="" width="131" height="68">
-
-<tr><td><p class=tlp>
-One or more:
-</p><pre class=p1>
-case '+':
-	e = pop();
-	s = state(Split, e.start, NULL);
-	patch(e.out, s);
-	push(frag(e.start, list1(&amp;s-&gt;out1)));
-	break;
-</pre>
-<td><img src=fig19.png alt="" width="140" height="53">
-</table>
-
-<h2 class=sh>
-Implementation: Simulating the NFA
-</h2>
-
-<p class=pp>
-Now that the NFA has been built, we need to simulate it.
-The simulation requires tracking 
-<code>State</code>
-sets, which are stored as a simple array list:
-</p><pre class=p1>
-struct List
-{
-	State **s;
-	int n;
-};
-</pre><p class=lp>
-The simulation uses two lists:
-<code>clist</code>
-is the current set of states that the NFA is in,
-and
-<code>nlist</code>
-is the next set of states that the NFA will be in,
-after processing the current character.
-The execution loop initializes
-<code>clist</code>
-to contain just the start state and then
-runs the machine one step at a time.
-</p><pre class=p1>
-int
-match(State *start, char *s)
-{
-	List *clist, *nlist, *t;
-
-	/* l1 and l2 are preallocated globals */
-	clist = startlist(start, &amp;l1);
-	nlist = &amp;l2;
-	for(; *s; s++){
-		step(clist, *s, nlist);
-		t = clist; clist = nlist; nlist = t;	/* swap clist, nlist */
-	}
-	return ismatch(clist);
-}
-</pre><p class=lp>
-To avoid allocating on every iteration of the loop,
-<code>match</code>
-uses two preallocated lists
-<code>l1</code>
-and
-<code>l2</code>
-as
-<code>clist</code>
-and
-<code>nlist</code>,
-swapping the two after each step.
-</p>
-
-<p class=pp>
-If the final state list contains the matching state,
-then the string matches.
-</p><pre class=p1>
-int
-ismatch(List *l)
-{
-	int i;
-
-	for(i=0; i&lt;l-&gt;n; i++)
-		if(l-&gt;s[i] == matchstate)
-			return 1;
-	return 0;
-}
-</pre><p class=lp>
-</p>
-
-<p class=pp>
-<code>Addstate</code>
-adds a state to the list,
-but not if it is already on the list.
-Scanning the entire list for each add would be inefficient;
-instead the variable
-<code>listid</code>
-acts as a list generation number.
-When
-<code>addstate</code>
-adds
-<code>s</code>
-to a list,
-it records
-<code>listid</code>
-in
-<code>s->lastlist</code>.
-If the two are already equal,
-then 
-<code>s</code>
-is already on the list being built.
-<code>Addstate</code>
-also follows unlabeled arrows:
-if 
-<code>s</code>
-is a
-<code>Split</code>
-state with two unlabeled arrows to new states,
-<code>addstate</code>
-adds those states to the list instead of
-<code>s</code>.
-</p><pre class=p1>
-void
-addstate(List *l, State *s)
-{
-	if(s == NULL || s-&gt;lastlist == listid)
-		return;
-	s-&gt;lastlist = listid;
-	if(s-&gt;c == Split){
-		/* follow unlabeled arrows */
-		addstate(l, s-&gt;out);
-		addstate(l, s-&gt;out1);
-		return;
-	}
-	l-&gt;s[l-&gt;n++] = s;
-}
-</pre><p class=lp>
-</p>
-
-<p class=pp>
-<code>Startlist</code>
-creates an initial state list by adding just the start state:
-</p><pre class=p1>
-List*
-startlist(State *s, List *l)
-{
-	listid++;
-	l-&gt;n = 0;
-	addstate(l, s);
-	return l;
-}
-</pre><p class=lp>
-</p>
-
-<p class=pp>
-Finally,
-<code>step</code>
-advances the NFA past a single character, using
-the current list
-<code>clist</code>
-to compute the next list
-<code>nlist</code>.
-</p><pre class=p1>
-void
-step(List *clist, int c, List *nlist)
-{
-	int i;
-	State *s;
-
-	listid++;
-	nlist-&gt;n = 0;
-	for(i=0; i&lt;clist-&gt;n; i++){
-		s = clist-&gt;s[i];
-		if(s-&gt;c == c)
-			addstate(nlist, s-&gt;out);
-	}
-}
-</pre>
-
-<h2 class=sh>
-Performance
-</h2>
-
-<p class=pp>
-The C implementation just described was not written with performance in mind.
-Even so, a slow implementation of a linear-time algorithm
-can easily outperform a fast implementation of an 
-exponential-time algorithm once the exponent is large enough.
-Testing a variety of popular regular expression engines on 
-a so-called pathological regular expression demonstrates this nicely.
-</p>
-
-<p class=pp>
-Consider the regular expression
-<code>a?<sup><i>n</i></sup>a<sup><i>n</i></sup></code>.
-It matches the string
-<code>a<sup><i>n</i></sup></code>
-when the
-<code>a?</code>
-are chosen not to match any letters,
-leaving the entire string to be matched by the
-<code>a<sup><i>n</i></sup></code>.
-Backtracking regular expression implementations
-implement the zero-or-one
-<code>?</code>
-by first trying one and then zero.
-There are
-<i>n</i>
-such choices to make, a total of
-2<sup><i>n</i></sup> possibilities.
-Only the very last
-possibility&mdash;choosing zero for all the <code>?</code>&mdash;will lead to a match.
-The backtracking approach thus requires
-<i>O</i>(2<sup><i>n</i></sup>) time, so it will not scale much beyond <i>n</i>=25.
-</p>
-
-<p class=pp>
-In contrast, Thompson's algorithm maintains state lists of length
-approximately <i>n</i> and processes the string, also of length <i>n</i>,
-for a total of <i>O</i>(<i>n</i><sup>2</sup>) time.
-(The run time is superlinear,
-because we are not keeping the regular expression constant
-as the input grows.
-For a regular expression of length <i>m</i> run on text of length <i>n</i>,
-the Thompson NFA requires <i>O</i>(<i>mn</i>) time.)
-</p>
-
-<p class=pp>
-The following graph plots time required to check whether
-<code>a?<sup><i>n</i></sup>a<sup><i>n</i></sup></code>
-matches
-<code>a<sup><i>n</i></sup></code>:
-</p>
-
-<div class=fig>
-<center>
-<table cellspacing=0 cellpadding=0 border=0><tr><td>
-<div class=box>
-<center>
-<img src=grep1p.png alt="Performance graph" width="779" height="388">
-<br>
-regular expression and text size <i>n</i>
-<br>
-<code>a?</code><sup><i>n</i></sup><code>a</code><sup><i>n</i></sup>
-matching 
-<code>a</code><sup><i>n</i></sup>
-</center>
-</div>
-</table>
-</center>
-</div>
-
-<p class=lp>
-Notice that the graph's <i>y</i>-axis has a logarithmic scale,
-in order to be able to see a wide variety of times on a single graph.
-</p>
-
-<p class=pp>
-From the graph it is clear that Perl, PCRE, Python, and Ruby are
-all using recursive backtracking.
-PCRE stops getting the right answer at 
-<i>n</i>=23,
-because it aborts the recursive backtracking after a maximum number
-of steps.
-As of Perl 5.6, Perl's regular expression engine is
-<a href="http://perlmonks.org/index.pl?node_id=502408">said to memoize</a>
-the recursive backtracking search, which should, at some memory cost,
-keep the search from taking exponential amounts of time 
-unless backreferences are being used.
-As the performance graph shows, the memoization is not complete:
-Perl's run time grows exponentially even though there
-are no backreferences
-in the expression.
-Although not benchmarked here, Java uses a backtracking
-implementation too.
-In fact, the
-<code>java.util.regex</code>
-interface requires a backtracking
-implementation, because arbitrary Java code
-can be substituted into the matching path.
-PHP uses the PCRE library.
-</p>
-
-<p class=pp>
-The thick blue line is the C implementation of Thompson's algorithm given above.
-Awk, Tcl, GNU grep, and GNU awk 
-build DFAs, either precomputing them or using the on-the-fly
-construction described in the next section.
-</p>
-
-<p class=pp>
-Some might argue that this test is unfair to
-the backtracking implementations, since it focuses on an
-uncommon corner case.
-This argument misses the point:
-given a choice between an implementation
-with a predictable, consistent, fast running time on all inputs
-or one that usually runs quickly but can take
-years of CPU time (or more) on some inputs,
-the decision should be easy.
-Also, while examples as dramatic as this one
-rarely occur in practice, less dramatic ones do occur.
-Examples include using
-<code>(.*)</code>
-<code>(.*)</code>
-<code>(.*)</code>
-<code>(.*)</code>
-<code>(.*)</code>
-to split five space-separated fields, or using
-alternations where the common cases
-are not listed first.
-As a result, programmers often learn which constructs are
-expensive and avoid them, or they turn to so-called
-<a href="http://search.cpan.org/~dankogai/Regexp-Optimizer-0.15/lib/Regexp/Optimizer.pm">optimizers</a>.
-Using Thompson's NFA simulation does not require such adaptation:
-there are no expensive regular expressions.
-</p>
-
-<h2 class=sh>
-Caching the NFA to build a DFA
-</h2>
-
-<p class=pp>
-Recall that DFAs are more efficient to execute than NFAs,
-because DFAs are only ever in one state at a time: they never
-have a choice of multiple next states.
-Any NFA can be converted into an equivalent DFA
-in which each DFA state corresponds to a
-list of NFA states.
-</p>
-
-<p class=pp>
-For example, here is the NFA we used earlier for
-<code>abab|abbb</code>,
-with state numbers added:
-</p>
-<p class=fig><img src=fig20.png alt="NFA for abab|abbb" width="424" height="91"></p>
-<p class=lp>
-The equivalent DFA would be:
-</p>
-<p class=fig><img src=fig21.png alt="DFA for abab|abbb" width="496" height="170"></p>
-<p class=lp>
-Each state in the DFA corresponds to a list of 
-states from the NFA.
-</p>
-
-<p class=pp>
-In a sense, Thompson's NFA simulation is
-executing the equivalent DFA: each
-<code>List</code>
-corresponds to some DFA state,
-and the 
-<code>step</code>
-function is computing, given a list and a next character,
-the next DFA state to enter.
-Thompson's algorithm simulates the DFA by 
-reconstructing each DFA state as it is needed.
-Rather than throw away this work after each step,
-we could cache the
-<code>Lists</code>
-in spare memory, avoiding the cost of repeating the computation
-in the future
-and essentially computing the equivalent DFA as it is needed.
-This section presents the implementation of such an approach.
-Starting with the NFA implementation from the previous section,
-we need to add less than 100 lines to build a DFA implementation.
-</p>
-
-<p class=pp>
-To implement the cache, we first introduce a new data type
-that represents a DFA state:
-</p><pre class=p1>
-struct DState
-{
-	List l;
-	DState *next[256];
-	DState *left;
-	DState *right;
-};
-</pre><p class=lp>
-A
-<code>DState</code>
-is the cached copy of the list
-<code>l</code>.
-The array
-<code>next</code>
-contains pointers to the next state for each
-possible input character:
-if the current state is
-<code>d</code>
-and the next input character is
-<code>c</code>,
-then
-<code>d->next[c]</code>
-is the next state.
-If
-<code>d->next[c]</code>
-is null, then the next state has not been computed yet.
-<code>Nextstate</code>
-computes, records, and returns the next state
-for a given state and character.
-</p>
-
-<p class=pp>
-The regular expression match follows
-<code>d->next[c]</code>
-repeatedly, calling
-<code>nextstate</code>
-to compute new states as needed.
-</p><pre class=p1>
-int
-match(DState *start, char *s)
-{
-	int c;
-	DState *d, *next;
-	
-	d = start;
-	for(; *s; s++){
-		c = *s &amp; 0xFF;
-		if((next = d-&gt;next[c]) == NULL)
-			next = nextstate(d, c);
-		d = next;
-	}
-	return ismatch(&amp;d-&gt;l);
-}
-</pre><p class=lp>
-</p>
-
-<p class=pp>
-All the
-<code>DStates</code>
-that have been computed need to be saved in a 
-structure that lets us look up a
-<code>DState</code>
-by its
-<code>List</code>.
-To do this, we arrange them 
-in a binary tree
-using the sorted
-<code>List</code>
-as the key.
-The
-<code>dstate</code>
-function returns the
-<code>DState</code>
-for a given
-<code>List</code>,
-allocating one if necessary:
-</p><pre class=p1>
-DState*
-dstate(List *l)
-{
-	int i;
-	DState **dp, *d;
-	static DState *alldstates;
-
-	qsort(l-&gt;s, l-&gt;n, sizeof l-&gt;s[0], ptrcmp);
-
-	/* look in tree for existing DState */
-	dp = &amp;alldstates;
-	while((d = *dp) != NULL){
-		i = listcmp(l, &amp;d-&gt;l);
-		if(i &lt; 0)
-			dp = &amp;d-&gt;left;
-		else if(i &gt; 0)
-			dp = &amp;d-&gt;right;
-		else
-			return d;
-	}
-	
-	/* allocate, initialize new DState */
-	d = malloc(sizeof *d + l-&gt;n*sizeof l-&gt;s[0]);
-	memset(d, 0, sizeof *d);
-	d-&gt;l.s = (State**)(d+1);
-	memmove(d-&gt;l.s, l-&gt;s, l-&gt;n*sizeof l-&gt;s[0]);
-	d-&gt;l.n = l-&gt;n;
-
-	/* insert in tree */
-	*dp = d;
-	return d;
-}
-</pre><p class=lp>
-Nextstate runs the NFA
-<code>step</code>
-and returns the corresponding
-<code>DState</code>:
-</p><pre class=p1>
-DState*
-nextstate(DState *d, int c)
-{
-	step(&amp;d-&gt;l, c, &amp;l1);
-	return d-&gt;next[c] = dstate(&amp;l1);
-}
-</pre><p class=lp>
-Finally, the DFA's start state is the
-<code>DState</code>
-corresponding to the NFA's start list:
-</p><pre class=p1>
-DState*
-startdstate(State *start)
-{
-	return dstate(startlist(start, &amp;l1));
-}
-</pre><p class=lp>
-(As in the NFA simulation,
-<code>l1</code>
-is a preallocated
-<code>List</code>.)
-</p>
-
-<p class=pp>
-The
-<code>DStates</code>
-correspond to DFA states, but the DFA is only built as needed:
-if a DFA state has not been encountered during the search,
-it does not yet exist in the cache.
-An alternative would be to compute the entire DFA at once.
-Doing so would make
-<code>match</code>
-a little faster by removing the conditional branch,
-but at the cost of increased startup time and
-memory use.
-</p>
-
-<p class=pp>
-One might also worry about bounding the amount of
-memory used by the on-the-fly DFA construction.
-Since the
-<code>DStates</code>
-are only a cache of the 
-<code>step</code>
-function, the implementation of
-<code>dstate</code>
-could choose to throw away the entire DFA so far
-if the cache grew too large.
-This cache replacement policy 
-only requires a few extra lines of code in 
-<code>dstate</code>
-and in
-<code>nextstate</code>,
-plus around 50 lines of code for memory management.
-An implementation is
-<a href="http://swtch.com/~rsc/regexp/">available online</a>.
-(<a href="http://cm.bell-labs.com/cm/cs/awkbook/">Awk</a>
-uses a similar limited-size cache strategy,
-with a fixed limit of 32 cached states; this explains the discontinuity
-in its performance at <i>n</i>=28 in the graph above.)
-</p>
-
-<p class=pp>
-NFAs derived from regular expressions
-tend to exhibit good locality: they visit the same states
-and follow the same transition arrows over and over
-when run on most texts.
-This makes the caching worthwhile: the first time an arrow
-is followed, the next state must be computed as in the NFA
-simulation, but future traversals of the arrow are just
-a single memory access.
-Real DFA-based implementations can make use
-of additional optimizations to run even faster.
-A companion article (not yet written) will explore
-DFA-based regular expression implementations in more detail.
-</p>
-
-
-<h2 class=sh>
-Real world regular expressions
-</h2>
-
-<p class=pp>
-Regular expression usage in real programs
-is somewhat more complicated than what the regular expression
-implementations described above can handle.
-This section briefly describes the common complications;
-full treatment of any of these is beyond the scope of this
-introductory article.
-</p>
-
-<p class=pp>
-<i>Character classes</i>.
-A character class, whether 
-<code>[0-9]</code>
-or
-<code>\w</code>
-or
-<code>.</code> (dot),
-is just a concise representation of an alternation.
-Character classes can be expanded into alternations
-during compilation, though it is more efficient to add
-a new kind of NFA node to represent them explicitly.
-<a href="http://www.opengroup.org/onlinepubs/009695399/basedefs/xbd_chap09.html">POSIX</a>
-defines special character classes
-like <code>[[:upper:]]</code> that change meaning
-depending on the current locale, but the hard part of
-accommodating these is determining their meaning,
-not encoding that meaning into an NFA.
-</p>
-
-<p class=pp>
-<i>Escape sequences</i>.
-Real regular expression syntaxes need to handle
-escape sequences, both as a way to match metacharacters
-(<code>\(</code>,
-<code>\)</code>,
-<code>\\</code>,
-etc.)
-and to specify otherwise difficult-to-type characters such as
-<code>\n</code>.
-</p>
-
-<p class=pp>
-<i>Counted repetition</i>.
-Many regular expression implementations provide a counted
-repetition operator
-<code>{<i>n</i>}</code>
-to match exactly 
-<i>n</i>
-strings matching a pattern;
-<code>{</code><i>n</i><code>,</code><i>m</i><code>}</code>
-to match at least 
-<i>n</i>
-but no more than
-<i>m</i>;
-and
-<code>{</code><i>n</i><code>,}</code>
-to match
-<i>n</i>
-or more.
-A recursive backtracking implementation can implement
-counted repetition using a loop; an NFA or DFA-based
-implementation must expand the repetition:
-<i>e</i><code>{3}</code>
-expands to
-<i>eee</i>;
-<i>e</i><code>{3,5}</code>
-expands to
-<i>eeee</i><code>?</code><i>e</i><code>?</code>,
-and
-<i>e</i><code>{3,}</code>
-expands to
-<i>eee</i><code>+</code>.
-</p>
-
-<p class=pp>
-<i>Submatch extraction</i>.
-When regular expressions are used for splitting or parsing strings,
-it is useful to be able to find out which sections of the input string
-were matched by each subexpression.
-After a regular expression like
-<code>([0-9]+-[0-9]+-[0-9]+)</code>
-<code>([0-9]+:[0-9]+)</code>
-matches a string (say a date and time),
-many regular expression engines make the
-text matched by each parenthesized expression
-available.
-For example, one might write in Perl:
-</p><pre class=p1>
-if(/([0-9]+-[0-9]+-[0-9]+) ([0-9]+:[0-9]+)/){
-	print "date: $1, time: $2\n";
-}
-</pre><p class=lp>
-The extraction of submatch boundaries has been mostly ignored
-by computer science theorists, and it is perhaps the most
-compelling argument for using recursive backtracking.
-However, Thompson-style algorithms can be adapted to
-track submatch boundaries without giving up efficient performance.
-The Eighth Edition Unix
-<i>regexp</i>(3)
-library implemented such an algorithm as early as 1985,
-though as explained below,
-it was not very widely used or even noticed.
-</p>
-
-<p class=pp>
-<i>Unanchored matches</i>.
-This article has assumed that regular expressions
-are matched against an entire input string.
-In practice, one often wishes to find a substring
-of the input that matches the regular expression.
-Unix tools traditionally return the longest matching substring
-that starts at the leftmost possible point in the input.
-An unanchored search for 
-<i>e</i>
-is a special case
-of submatch extraction: it is like searching for
-<code>.*(<i>e</i>).*</code>
-where the first
-<code>.*</code>
-is constrained to match as short a string as possible.
-</p>
-
-<p class=pp>
-<i>Non-greedy operators</i>.
-In traditional Unix regular expressions, the repetition operators
-<code>?</code>,
-<code>*</code>,
-and
-<code>+</code>
-are defined to match as much of the string as possible while
-still allowing the entire regular expression to match:
-when matching
-<code>(.+)(.+)</code>
-against
-<code>abcd</code>,
-the first
-<code>(.+)</code>
-will match
-<code>abc</code>,
-and the second
-will match
-<code>d</code>.
-These operators are now called
-<i>greedy</i>.
-Perl introduced
-<code>??</code>,
-<code>*?</code>,
-and
-<code>+?</code>
-as non-greedy versions, which match as little of the string
-as possible while preserving the overall match:
-when matching
-<code>(.+?)(.+?)</code>
-against
-<code>abcd</code>,
-the first
-<code>(.+?)</code>
-will match only
-<code>a</code>,
-and the second
-will match
-<code>bcd.</code>
-By definition, whether an operator is greedy
-cannot affect whether a regular expression matches a
-particular string as a whole; it only affects the
-choice of submatch boundaries.
-The backtracking algorithm admits a simple implementation
-of non-greedy operators:
-try the shorter match before the longer one.
-For example, in a standard backtracking implementation,
-<code><i>e</i>?</code>
-first tries using
-<i>e</i>
-and then tries not using it;
-<code><i>e</i>??</code>
-uses the other order.
-The submatch-tracking variants of Thompson's algorithm
-can be adapted to accommodate non-greedy operators.
-</p>
-
-<p class=pp>
-<i>Assertions</i>.
-The traditional regular expression metacharacters
-<code>^</code>
-and
-<code>$</code>
-can be viewed as
-<i>assertions</i>
-about the text around them:
-<code>^</code>
-asserts that the previous character
-is a newline (or the beginning of the string),
-while
-<code>$</code>
-asserts that the next character is a newline
-(or the end of the string).
-Perl added more assertions, like
-the word boundary
-<code>\b</code>,
-which asserts that 
-the previous character is alphanumeric but the next
-is not, or vice versa.
-Perl also generalized the idea to arbitrary
-conditions called lookahead assertions:
-<code>(?=</code><i>re</i><code>)</code>
-asserts that the text after the current input position matches
-<i>re</i>,
-but does not actually advance the input position;
-<code>(?!</code><i>re</i><code>)</code>
-is similar but 
-asserts that the text does not match
-<i>re</i>.
-The lookbehind assertions
-<code>(?&lt;=</code><i>re</i><code>)</code>
-and
-<code>(?&lt;!</code><i>re</i><code>)</code>
-are similar but make assertions about the text
-before the current input position.
-Simple assertions like
-<code>^</code>,
-<code>$</code>,
-and
-<code>\b</code>
-are easy to accommodate in an NFA,
-delaying the match one byte for forward assertions.
-The generalized assertions
-are harder to accommodate but in principle could
-be encoded in the NFA.
-</p>
-
-<p class=pp>
-<i>Backreferences</i>.
-As mentioned earlier, no one knows how to 
-implement regular expressions with backreferences efficiently,
-though no one can prove that it's impossible either.
-(Specifically, the 
-<a href="http://perl.plover.com/NPC/NPC-3SAT.html">problem is NP-complete</a>, meaning that if
-someone did find an efficient implementation, that would
-be <i>major</i> news to computer scientists and would
-win a <a href="http://www.claymath.org/Popular_Lectures/Minesweeper/">million dollar prize</a>.)
-The simplest, most effective strategy for backreferences,
-taken by the original awk and egrep, is not to implement them.
-This strategy is no longer practical: users have come to
-rely on backreferences for at least occasional use,
-and backreferences are part of
-the
-<a href="http://www.opengroup.org/onlinepubs/009695399/basedefs/xbd_chap09.html">POSIX standard for regular expressions</a>.
-Even so, it would be reasonable to use Thompson's NFA simulation
-for most regular expressions, and only bring out
-backtracking when it is needed.
-A particularly clever implementation could combine the two,
-resorting to backtracking only to accommodate the backreferences.
-</p>
-
-<p class=pp>
-<i>Backtracking with memoization</i>.
-Perl's approach of using memoization to avoid exponential blowup
-during backtracking
-when possible is a good one.  At least in theory, it should make
-Perl's regular expressions behave more like an NFA and
-less like backtracking.  
-Memoization does not completely solve the problem, though:
-the memoization itself requires a memory footprint roughly 
-equal to the size of the text times the size of the regular expression.
-Memoization also does not address the issue of the stack space used
-by backtracking, which is linear in the size of the text:
-matching long strings typically causes a backtracking
-implementation to run out of stack space:
-</p><pre class=p1>
-$ perl -e '("a" x 100000) =~ /^(ab?)*$/;'
-Segmentation fault (core dumped)
-$
-</pre>
-
-<p class=pp>
-<i>Character sets</i>.
-Modern regular expression implementations must deal with 
-large non-ASCII character sets such as Unicode.
-The 
-<a href="http://swtch.com/plan9port/unix/"
->Plan 9 regular expression library</a>
-incorporates Unicode by running an NFA with a
-single Unicode character as the input character for each step.
-That library separates the running of the NFA from decoding
-the input, so that the same regular expression matching code
-is used for both 
-<a href="http://plan9.bell-labs.com/sys/doc/utf.html">UTF-8</a>
-and wide-character inputs.
-</p>
-
-<h2 class=sh id=History>
-History and References
-</h2>
-
-
-<p class=pp>
-<a name="rabin-scott-b"></a>Michael Rabin and Dana Scott
-introduced non-deterministic finite automata
-and the concept of non-determinism in 1959
-[<a href="#rabin-scott">7</a>],
-showing that NFAs can be simulated by
-(potentially much larger) DFAs in which 
-each DFA state corresponds to a set of NFA states.
-(They won the Turing Award in 1976 for the introduction
-of the concept of non-determinism in that paper.)
-</p>
-
-<p class=pp>
-<a name="mcnaughton-yamada-b">R. McNaughton and H. Yamada
-</a>[<a href="#mcnaughton-yamada">4</a>]
-and 
-<a name="thompson-b"></a>Ken Thompson
-[<a href="#thompson">9</a>]
-are commonly credited with giving the first constructions
-to convert regular expressions into NFAs,
-even though neither paper mentions the
-then-nascent concept of an NFA.
-McNaughton and Yamada's construction
-creates a DFA,
-and Thompson's construction creates IBM 7094 machine code,
-but reading between the lines one can
-see latent NFA constructions underlying both.
-Regular expression to NFA constructions differ only in how they encode 
-the choices that the NFA must make.
-The approach used above, mimicking Thompson,
-encodes the choices with explicit choice
-nodes
-(the
-<code>Split</code>
-nodes above)
-and unlabeled arrows.
-An alternative approach,
-the one most commonly credited to McNaughton and Yamada,
-is to avoid unlabeled arrows, instead allowing NFA states to
-have multiple outgoing arrows with the same label.
-<a name="mcilroy-b"></a>McIlroy
-[<a href="#mcilroy">3</a>]
-gives a particularly elegant implementation of this approach
-in Haskell.
-</p>
-
-<p class=pp>
-<a name="vanvleck-b"></a>Thompson's regular expression implementation
-was for his QED editor running on the CTSS 
-[<a href="#vanvleck">10</a>]
-operating
-system on the IBM 7094.
-<a name="pierce-b"></a>A copy of the editor can be found in archived CTSS sources
-[<a href="#pierce">5</a>].
-<a name="deutsch-lampson-b"></a>L. Peter Deutsch and Butler Lampson
-[<a href="#deutsch-lampson">1</a>]
-developed the first QED, but
-Thompson's reimplementation was the first to use
-regular expressions.
-<a name="ritchie-b"></a>Dennis Ritchie, author of yet another QED implementation,
-has documented the early history of the QED editor
-[<a href="#ritchie">8</a>]
-(Thompson, Ritchie, and Lampson later won
-Turing awards for work unrelated to QED or finite automata.)
-</p>
-
-<p class=pp>
-Thompson's paper marked the 
-beginning of a long line of regular expression implementations.
-Thompson chose not to use his algorithm when 
-implementing the text editor ed, which appeared in 
-First Edition Unix (1971), or in its descendant grep,
-which first appeared in the Fourth Edition (1973).
-Instead, these venerable Unix tools used
-recursive backtracking!
-Backtracking was justifiable because the
-regular expression syntax was quite limited:
-it omitted grouping parentheses and the
-<code>|</code>,
-<code>?</code>,
-and
-<code>+</code>
-operators.
-Al Aho's egrep,
-which first appeared in the Seventh Edition (1979),
-was the first Unix tool to provide
-the full regular expression syntax, using a
-precomputed DFA.
-By the Eighth Edition (1985), egrep computed the DFA on the fly,
-like the implementation given above.
-</p>
-
-<p class=pp>
-<a name="pike-b"></a>While writing the text editor sam 
-[<a href="#pike">6</a>]
-in the early 1980s,
-Rob Pike wrote a new regular expression implementation,
-which Dave Presotto extracted into a library that 
-appeared in the Eighth Edition.
-Pike's implementation
-incorporated submatch tracking into an efficient NFA simulation
-but, like the rest of the Eighth Edition source, was not widely
-distributed.
-Pike himself did not realize that his technique was anything new.
-Henry Spencer reimplemented the Eighth Edition library
-interface from scratch, but using backtracking,
-and
-<a href="http://arglist.com/regex/">released his implementation</a>
-into the public domain.
-It became very widely used, eventually serving as the basis
-for the slow regular expression implementations
-mentioned earlier: Perl, PCRE, Python, and so on.
-(In his defense,
-Spencer knew the routines could be slow,
-and he didn't know that a more efficient algorithm existed.
-He even warned in the documentation,
-&ldquo;Many users have found the speed perfectly adequate,
-although replacing the insides of egrep with this code
-would be a mistake.&rdquo;)
-Pike's regular expression implementation, extended to
-support Unicode, was made freely available
-with sam in 
-<a href="http://groups.google.com/group/comp.os.research/msg/f1783504a2d18051">late 1992</a>,
-but the particularly efficient
-regular expression search algorithm went unnoticed.
-The code is now available in many forms: as 
-<a href="http://plan9.bell-labs.com/sources/plan9/sys/src/cmd/sam/">part of sam</a>,
-as 
-<a href="http://plan9.bell-labs.com/sources/plan9/sys/src/libregexp/">Plan&nbsp;9's regular expression library</a>,
-or
-<a href="http://swtch.com/plan9port/unix/">packaged separately for Unix</a>.
-<a name="laurikari-b"></a>Ville Laurikari independently discovered Pike's algorithm
-in 1999, developing a theoretical foundation as well
-[<a href="#laurikari">2</a>].
-</p>
-
-
-<p class=pp>
-Finally, any discussion of regular expressions
-would be incomplete without mentioning 
-Jeffrey Friedl's book
-<i>Mastering Regular Expressions</i>,
-perhaps the most popular reference among today's programmers.
-Friedl's book teaches programmers how best to use today's
-regular expression implementations, but not how best to implement them.
-What little text it devotes to implementation
-issues perpetuates the widespread belief that recursive backtracking
-is the only way to simulate an NFA.
-Friedl makes it clear that he 
-<a href="http://regex.info/blog/2006-09-15/248"
->neither understands nor respects</a>
-the underlying theory.
-</p>
-
-<h2 class=sh>
-Summary
-</h2>
-
-<p class=pp>
-Regular expression matching can be simple and fast, using
-finite automata-based techniques that have been known for decades.
-In contrast, Perl, PCRE, Python, Ruby, Java,
-and many other languages
-have regular expression implementations based on 
-recursive backtracking that are simple but can be
-excruciatingly slow.
-With the exception of backreferences, the features
-provided by the slow backtracking implementations
-can be provided by the automata-based implementations
-at dramatically faster, more consistent speeds.
-</p>
-
-<p class=pp>
-The next article in this series,
-&ldquo;<a href="regexp2.html">Regular Expression Matching: the Virtual Machine Approach</a>,&rdquo; discusses NFA-based submatch extraction.
-The third article, &ldquo;<a href="regexp3.html">Regular Expression Matching in the Wild</a>,&rdquo; examines a production implementation.
-The fourth article, &ldquo;<a href="regexp4.html">Regular Expression Matching with a Trigram Index</a>,&rdquo; explains how Google Code Search was implemented.
-</p>
-
-<h2 class=sh>
-Acknowledgements
-</h2>
-
-<p class=pp>
-Lee Feigenbaum,
-James Grimmelmann,
-Alex Healy,
-William Josephson,
-and
-Arnold Robbins
-read drafts of this article and made many helpful suggestions.
-Rob Pike clarified some of the history surrounding his
-regular expression implementation.
-Thanks to all.
-</p>
-
-<h2 class=sh>
-References
-</h2>
-
-<p class=lp-left>
-<a name=deutsch-lampson></a>
-[<a href="#deutsch-lampson-b">1</a>]
-L. Peter Deutsch and Butler Lampson,
-&ldquo;An online editor,&rdquo;
-Communications of the ACM 10(12) (December 1967), pp.&nbsp;793&ndash;799.
-<a href="http://doi.acm.org/10.1145/363848.363863"><i>http://doi.acm.org/10.1145/363848.363863</i></a>
-</p><p class=lp-left>
-<a name=laurikari></a>
-[<a href="#laurikari-b">2</a>]
-Ville Laurikari,
-&ldquo;NFAs with Tagged Transitions,
-their Conversion to Deterministic Automata
-and
-Application to Regular Expressions,&rdquo;
-in Proceedings of the Symposium on String Processing and
-Information Retrieval, September 2000.
-<a href="http://laurikari.net/ville/spire2000-tnfa.ps"><i>http://laurikari.net/ville/spire2000-tnfa.ps</i></a>
-</p><p class=lp-left>
-<a name=mcilroy></a>
-[<a href="#mcilroy-b">3</a>]
-M. Douglas McIlroy,
-&ldquo;Enumerating the strings of regular languages,&rdquo;
-Journal of Functional Programming 14 (2004), pp.&nbsp;503&ndash;518.
-<a href="http://www.cs.dartmouth.edu/~doug/nfa.ps.gz"><i>http://www.cs.dartmouth.edu/~doug/nfa.ps.gz</i></a> (preprint)
-</p><p class=lp-left>
-<a name=mcnaughton-yamada></a>
-[<a href="#mcnaughton-yamada-b">4</a>]
-R. McNaughton and H. Yamada,
-&ldquo;Regular expressions and state graphs for automata,&rdquo;
-IRE Transactions on Electronic Computers EC-9(1) (March 1960), pp.&nbsp;39&ndash;47.
-</p><p class=lp-left>
-<a name=pierce></a>
-[<a href="#pierce-b">5</a>]
-Paul Pierce,
-&ldquo;CTSS source listings.&rdquo;
-<a href="http://www.piercefuller.com/library/ctss.html"><i>http://www.piercefuller.com/library/ctss.html</i></a> 
-(Thompson's QED is in the file
-<code>com5</code>
-in the source listings archive and is marked as
-<code>0QED</code>)
-</p><p class=lp-left>
-<a name=pike></a>
-[<a href="#pike-b">6</a>]
-Rob Pike,
-&ldquo;The text editor sam,&rdquo;
-Software&mdash;Practice & Experience 17(11) (November 1987), pp.&nbsp;813&ndash;845.
-<a href="http://plan9.bell-labs.com/sys/doc/sam/sam.html"><i>http://plan9.bell-labs.com/sys/doc/sam/sam.html</i></a>
-</p><p class=lp-left>
-<a name=rabin-scott></a>
-[<a href="#rabin-scott-b">7</a>]
-Michael Rabin and Dana Scott,
-&ldquo;Finite automata and their decision problems,&rdquo;
-IBM Journal of Research and Development 3 (1959), pp.&nbsp;114&ndash;125.
-<a href="http://www.research.ibm.com/journal/rd/032/ibmrd0302C.pdf"><i>http://www.research.ibm.com/journal/rd/032/ibmrd0302C.pdf</i></a>
-</p><p class=lp-left>
-<a name=ritchie></a>
-[<a href="#ritchie-b">8</a>]
-Dennis Ritchie,
-&ldquo;An incomplete history of the QED text editor.&rdquo;
-<a href="http://plan9.bell-labs.com/~dmr/qed.html"><i>http://plan9.bell-labs.com/~dmr/qed.html</i></a>
-</p><p class=lp-left>
-<a name=thompson></a>
-[<a href="#thompson-b">9</a>]
-Ken Thompson,
-&ldquo;Regular expression search algorithm,&rdquo;
-Communications of the ACM 11(6) (June 1968), pp.&nbsp;419&ndash;422.
-<a href="http://doi.acm.org/10.1145/363347.363387"><i>http://doi.acm.org/10.1145/363347.363387</i></a>
-(<font size=-1><a href="http://www.cs.chalmers.se/~coquand/AUTOMATA/thompson.pdf">PDF</a></font>)
-</p><p class=lp-left>
-<a name=vanvleck></a>
-[<a href="#vanvleck-b">10</a>]
-Tom Van Vleck,
-&ldquo;The IBM 7094 and CTSS.&rdquo;
-<a href="http://www.multicians.org/thvv/7094.html"><i>http://www.multicians.org/thvv/7094.html</i></a>
-</p>
-
-<br>
-<p class=lp-left>
-Discussion on <a href="http://programming.reddit.com/info/10c60/comments">reddit</a> and <a href="http://perlmonks.org/?node_id=597262">perlmonks</a> and
-<a href="http://lambda-the-ultimate.org/node/2064">LtU</a>
-</p>
-
-<center>
-<p class=copy>
-Copyright &copy; 2007 Russ Cox.  All Rights Reserved.
-<br>
-<a href="http://swtch.com/~rsc/regexp/">http://swtch.com/~rsc/regexp/</a>
-</p>
-</center>
-<script type="text/javascript">
-var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
-document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
-</script>
-<script type="text/javascript">
-var pageTracker = _gat._getTracker("UA-3319603-2");
-pageTracker._initData();
-pageTracker._trackPageview();
-</script>
-<script type="text/javascript">
-  (function() {
-    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
-    po.src = 'https://apis.google.com/js/plusone.js';
-    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
-  })();
-</script>
-</body>
-</html>
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+# generated corpus for the zstd module test suite, line of a repeating banner
+
+pair entry a length list encoding window brown prefix cache variable match header source source output worker.
+prefix entry rewrite window block window suffix dictionary index level over lazy the boolean length output.
+entry quick dog level block frame offset buffer.
+buffer variable array literal process proxy array file literal level length fox module header length rewrite.
+input entry worker response file config file server.
+brown module file header list process stream list config index a frame.
+location cache over number number handler client input module table stream.
+chunk dictionary dog handler body worker decompress a process rewrite server table location entry array output.
+input path brown socket prefix buffer stream stream output literal match.
+offset chunk jumps ratio the the worker path filter jumps length decompress a.
+directive header array response location over decompress filter directive list cache the string response number cache.
+pair string config header rewrite list nginx value.
+
+response array file handler pair length pair phase suffix header level decompress prefix over array.
+literal array target buffer worker pair encoding module level frame module fox output.
+level a location dog phase cache key response index stream.
+dog file frame chunk server source ratio window ratio lazy array block decompress dog.
+socket proxy quick location buffer module server block request match literal match chunk.
+block level source request chunk body the decompress handler socket output fox nginx value pair static.
+worker chunk worker filter buffer dictionary a length header prefix target client filter quick offset.
+upstream variable frame content response nginx proxy the ratio file a stream proxy chunk.
+array location string variable output upstream response the list compress offset quick buffer response lazy socket lazy.
+over lazy pair socket array prefix match over handler pair.
+over ratio a level cache process path encoding window length a.
+decompress level upstream cache nginx length server list pair directive response.
+
+body string block body offset cache brown server.
+string table server length pair location quick header boolean worker over content array.
+content dictionary key source match block location entry header.
+pair index dog ratio client location string array block directive match literal nginx boolean entry table.
+proxy string chunk over length filter source path prefix server body list array string index server lazy.
+level variable the chunk dictionary source dog dictionary stream.
+dog target suffix header number upstream string source input content key value upstream.
+handler index proxy rewrite body level the target block the a content block compress.
+content target upstream lazy config stream proxy dictionary stream jumps length window module filter path frame table.
+over literal rewrite static header a window file window frame.
+buffer over handler response client list proxy handler content a.
+config directive fox rewrite over compress filter filter rewrite proxy match pair stream.
+
+response static pair response index compress server suffix length dog pair list.
+suffix ratio compress decompress server index compress match quick quick stream key array proxy fox content offset.
+number variable file path static list dog worker jumps file upstream variable phase upstream.
+literal request value client chunk suffix compress body pair filter handler.
+pair list jumps table frame chunk match body proxy upstream ratio list server fox fox socket.
+handler a list request index variable request socket.
+fox process handler suffix socket array list nginx config upstream over.
+response frame body boolean frame file length suffix.
+window input static index lazy suffix table match dog output.
+dog input static phase directive key directive buffer lazy file filter number compress file offset.
+brown proxy match target module directive the input path fox.
+encoding nginx suffix header buffer process brown brown a encoding compress module.
+
+proxy file server request upstream rewrite match request number pair phase.
+content index length dictionary socket level handler array path over number.
+client window socket dictionary variable pair request decompress upstream pair suffix match static header decompress config.
+table brown chunk length pair upstream target block offset over buffer stream worker literal content upstream.
+client quick server file suffix over stream proxy match client content.
+worker content path lazy rewrite value encoding decompress ratio window.
+module prefix level number stream value boolean phase socket directive encoding target.
+filter handler file chunk boolean static static ratio rewrite upstream buffer filter chunk.
+location nginx file window ratio dog key block.
+chunk prefix value output boolean input dog input decompress path static over output quick header stream.
+dictionary handler content list filter level pair body chunk frame handler nginx frame the a.
+suffix table array key value decompress config upstream body array source input.
+
+value jumps upstream number process variable static array ratio boolean.
+target dictionary worker response client string header boolean output dictionary.
+decompress frame output nginx input prefix stream frame decompress response over.
+decompress over handler dictionary nginx literal pair phase key module suffix cache server string.
+process quick directive over string brown level socket proxy fox.
+process response length process brown list entry path body module buffer stream boolean chunk header.
+literal array number level directive string output ratio entry target path block literal client frame client nginx.
+entry target body frame value body source buffer client stream quick response.
+location lazy path table process list dog header string request server path a path.
+phase suffix upstream location prefix location jumps rewrite list match.
+match over directive jumps fox key header proxy.
+array body value request cache brown file socket rewrite encoding path index.
+
+brown encoding the worker jumps window variable table quick level input prefix.
+source proxy client number frame index list list source nginx decompress static entry file array.
+value header table quick brown boolean fox location encoding string block rewrite chunk path process compress upstream.
+output pair window list handler literal block filter socket list stream offset dog buffer lazy handler.
+response fox location worker ratio level over string.
+length index frame prefix window input key output source suffix window variable frame suffix list request.
+offset config block location source stream client jumps frame handler rewrite dog path.
+filter brown jumps handler list offset length brown table the filter.
+socket ratio table jumps jumps key nginx directive.
+phase encoding match dictionary chunk location content dictionary.
+the chunk server phase handler string value process variable.
+nginx list table chunk location proxy source encoding source socket buffer table socket string request body content.
+
+prefix server suffix response header length jumps brown offset rewrite socket value request handler key config window.
+config variable content response list length handler input variable.
+level buffer jumps request dictionary buffer body key.
+upstream stream string ratio window variable key module index array directive.
+dictionary output a table key filter entry handler dog the compress ratio number proxy.
+variable level config a encoding boolean process decompress response brown request cache filter length response fox.
+client directive table request prefix chunk rewrite file dog target value content frame cache buffer source.
+location key target frame array ratio suffix key worker worker response fox directive pair.
+config output path offset fox nginx over boolean key value a output request list level output.
+list over socket location length socket literal chunk compress worker proxy stream.
+a string socket config upstream server phase a compress dictionary handler window offset location phase a.
+module entry variable length fox location literal a file key.
+
+array quick fox compress content nginx upstream match.
+string frame window file file offset a match handler.
+entry value fox path frame nginx fox process block offset variable worker brown.
+proxy index buffer stream filter chunk header cache level source.
+chunk value buffer jumps source static number dictionary.
+rewrite header string client module directive source input match ratio pair.
+number encoding dictionary file compress upstream input upstream list module window string response chunk.
+fox encoding offset static variable socket filter ratio path boolean.
+number dictionary value length module output buffer a stream brown variable frame config socket a.
+cache lazy compress path over module handler encoding server buffer pair window list value output header cache.
+compress cache a body literal value server chunk chunk.
+ratio handler request index brown variable level socket input source.
+
+buffer rewrite target encoding phase body list literal static block input.
+filter the file dog stream entry header stream worker window server socket rewrite key file variable.
+decompress module brown lazy dog level key frame worker header.
+worker pair index upstream pair brown stream value handler rewrite dog target.
+compress nginx location brown variable location literal variable input window module decompress header proxy decompress dictionary.
+socket literal input handler over proxy pair location source frame upstream.
+static literal server jumps string variable lazy config client list list compress nginx fox fox ratio.
+dictionary brown prefix request config window decompress entry string match length client quick fox request block.
+source cache file offset quick body output response target index response proxy process target a.
+entry filter file prefix frame match literal socket prefix body quick.
+config server pair rewrite the key literal file module.
+fox string block ratio target literal offset nginx cache proxy length output list.
+
+match quick length suffix dictionary the config content list input frame offset.
+boolean boolean compress ratio encoding location file compress ratio content.
+prefix chunk file ratio match directive buffer client the source phase frame rewrite location upstream.
+response input prefix proxy phase list entry key static target window source table.
+dictionary header target directive array header phase offset literal.
+nginx literal literal decompress chunk variable buffer quick compress table source jumps target entry.
+dictionary path offset filter length string target upstream client source window table number pair jumps buffer length.
+string output header source match entry variable path offset brown index dog directive the value fox.
+proxy client process match encoding buffer encoding string dog.
+target handler socket frame cache a body prefix quick string source prefix number path quick.
+input entry list chunk dictionary process upstream window.
+stream module compress encoding ratio worker handler jumps response jumps level encoding length.
+
+file suffix value variable number offset suffix chunk.
+location config ratio fox phase directive handler rewrite brown a output.
+suffix number cache the content proxy window chunk over stream.
+block frame value list file a pair chunk pair response entry config cache.
+compress dictionary file nginx cache body suffix brown input socket source array worker.
+client index filter nginx the prefix rewrite filter dictionary response ratio upstream client level a cache key.
+client list pair pair body value module list directive rewrite level suffix buffer upstream process static phase.
+stream variable content pair frame output handler offset.
+prefix stream dog brown pair key chunk process encoding phase file source target.
+fox suffix upstream filter header config source pair body entry.
+request request upstream socket stream length index string dictionary body decompress compress buffer index handler entry worker.
+compress worker directive jumps literal boolean worker pair a upstream header server value offset.
+
+encoding upstream frame level array list cache client nginx module number.
+literal offset module number response filter upstream pair jumps list key.
+array stream content brown window output input server response pair input ratio stream.
+upstream block server over nginx jumps prefix number prefix table index level socket.
+output output value rewrite module quick static encoding over entry nginx level response upstream.
+cache cache variable header window static entry pair suffix process jumps.
+rewrite dictionary directive variable dog block worker cache level length the level the number a length.
+quick request path over array a literal client header quick file.
+filter filter nginx phase handler path the proxy encoding string upstream config.
+entry variable array rewrite rewrite target lazy chunk block path.
+over variable handler window path directive upstream file encoding literal.
+dictionary request chunk window input a decompress rewrite length path value output value request target jumps.
+
+ratio ratio entry suffix entry client literal pair prefix.
+compress variable client match handler boolean prefix rewrite header.
+over request suffix over prefix target table a decompress module decompress cache window match request number number.
+chunk list proxy index the path file static.
+ratio suffix header boolean jumps module lazy socket literal phase dictionary length.
+file level prefix nginx literal worker length handler prefix encoding.
+cache source buffer boolean request literal suffix nginx key the client path string.
+number value jumps dictionary key config value request proxy static match.
+target pair match prefix number ratio nginx filter block brown handler response body index.
+cache index header process variable input input target cache source filter input module.
+index body frame suffix variable header target pair dog stream header the jumps stream jumps content response.
+quick entry source socket output level file process dog ratio prefix index prefix header boolean.
+
+output window ratio buffer nginx encoding table over client array rewrite process process.
+input index source block nginx client key client fox.
+buffer literal nginx list decompress nginx nginx entry level.
+input config module client encoding server string the entry.
+ratio decompress jumps dog location boolean frame array worker output module output proxy over nginx array cache.
+input body offset window table pair chunk buffer list cache prefix a brown list the upstream.
+brown offset pair cache dictionary location buffer filter input output level over rewrite.
+dictionary level process file offset string target literal.
+target client block window static input match pair over block offset encoding.
+value input handler config length stream socket brown window phase body rewrite output array brown.
+lazy pair variable proxy nginx list number content over over.
+proxy handler static body module key key location level over index config.
+
+a file ratio buffer module lazy list suffix number pair offset offset buffer static content config frame.
+module header path list literal brown fox source client module server source dog target ratio.
+list entry body target over server file length buffer number body.
+key chunk config stream static block boolean directive pair header literal value.
+cache static client block list client length dog entry buffer process.
+config block body jumps socket decompress module content prefix over value.
+window upstream worker frame client process number key boolean array stream.
+upstream compress literal socket key the dictionary cache level input.
+frame array table nginx block static entry dog pair module handler dog source nginx a config.
+header encoding directive array table over config block the cache.
+frame upstream dog fox table jumps compress dog boolean key body key phase process.
+target fox content socket array key filter chunk directive server body source string fox.
+
+string brown frame directive block index pair number decompress response prefix ratio rewrite process.
+value list handler length block boolean boolean jumps quick compress dictionary.
+filter rewrite phase worker lazy target pair index number.
+encoding brown proxy key lazy chunk config source cache.
+stream encoding handler target location file response buffer compress file stream level the.
+boolean level response boolean filter table length block.
+proxy match phase header cache target proxy buffer chunk content nginx key offset decompress index.
+dog a compress input target handler proxy level module.
+request rewrite filter match content dictionary string lazy target compress path content body index.
+window phase key lazy request brown a compress.
+file proxy list content key length dictionary static worker cache module process fox encoding cache rewrite number.
+stream cache static entry length level lazy the file suffix output string request.
+
+fox table stream quick request match directive dog.
+path variable level pair decompress dictionary prefix suffix decompress location request.
+over content lazy output level decompress client suffix request brown worker a string string.
+stream boolean request path pair dog decompress body body length entry nginx config value.
+length target lazy block compress key request key literal prefix.
+ratio number request compress source path a encoding window location.
+chunk level index config variable header fox table match a the body decompress chunk.
+response block static string path level header cache encoding socket boolean.
+the decompress source header brown window variable filter request chunk nginx cache dog pair.
+content block decompress level nginx key file dog level client frame nginx rewrite nginx.
+buffer length header header static frame buffer filter length dictionary jumps.
+fox cache window brown proxy value jumps file the upstream the chunk.
+
+worker dog brown buffer over output string dictionary path ratio process.
+request window key table socket index content number client boolean dictionary.
+file key chunk dog entry fox response the client encoding output key stream buffer server list.
+decompress dog client ratio stream worker path stream.
+target rewrite index length prefix chunk jumps request source level client string target.
+window output file response array frame phase number.
+rewrite suffix file index ratio rewrite length directive quick list key.
+ratio prefix server dictionary client match content chunk number.
+dog frame target dictionary key target file jumps server level.
+server response value source handler content variable decompress over length phase target module window fox boolean.
+match request ratio index lazy index header location config proxy dictionary body upstream buffer suffix chunk number.
+module block header proxy static quick client entry table proxy chunk.
+
+brown phase ratio dictionary handler key the table boolean header.
+proxy location table input stream location stream file offset directive process file.
+suffix process static literal cache list client literal target dictionary request response input.
+directive cache literal location encoding response source stream phase array.
+decompress variable suffix request directive match config offset process content input.
+input response match dictionary file ratio index phase.
+string header chunk socket list rewrite directive config key block.
+file literal body quick fox dog worker table directive array server.
+list offset lazy buffer module socket config client.
+header over string process decompress match jumps key string config location.
+prefix cache compress client rewrite literal offset brown proxy literal table static path frame.
+decompress encoding entry brown literal variable config server proxy input process frame cache target location literal worker.
+
+level chunk decompress level suffix cache rewrite proxy literal worker proxy frame window prefix encoding content target.
+table phase index string cache entry literal content.
+socket chunk list output module block block dictionary dog cache encoding index compress literal a window input.
+literal ratio response match header over dictionary input.
+key quick target pair fox ratio jumps suffix response over request the.
+response list handler body window socket dog the a value stream file window dog.
+handler suffix handler input phase filter entry file stream window.
+literal value key worker path quick fox file path boolean rewrite source block.
+variable key index phase lazy dictionary pair header body buffer offset entry index dictionary key.
+phase a response config suffix table buffer body location index number fox.
+jumps nginx socket pair literal level config entry.
+dictionary static nginx table array rewrite body fox header array.
+
+variable literal dog upstream key entry block suffix body level table.
+input quick dictionary encoding buffer content source directive target output jumps block handler.
+static dog number upstream value phase response ratio lazy the config path cache literal frame level encoding.
+compress target request buffer handler directive filter buffer decompress fox table.
+prefix chunk cache handler entry frame encoding buffer.
+dictionary input window path rewrite string ratio block config suffix socket output the block level.
+response level number key key worker encoding handler output pair ratio server string stream response.
+key handler static array pair source over prefix.
+output key window path input target boolean quick array frame response match filter value ratio rewrite the.
+proxy entry handler handler file target module directive index header value target level target source.
+request upstream target prefix client brown body offset response a upstream nginx.
+server handler dog static prefix content process length socket static string handler.
+
+cache dog upstream client compress value level boolean lazy pair directive body request directive block.
+dog table jumps boolean key prefix response variable decompress window rewrite.
+index frame number static config boolean array ratio.
+header target quick decompress directive encoding worker cache lazy static brown filter index ratio fox over request.
+pair response socket client stream buffer buffer proxy path buffer chunk stream stream dictionary value chunk filter.
+module output worker nginx stream pair level directive config quick entry file target.
+static server config string socket process content a.
+buffer number source location path string brown window phase.
+socket quick compress array brown prefix socket response number upstream.
+client window handler phase chunk upstream over literal the nginx pair.
+header brown quick buffer header suffix cache dog block upstream brown block pair array server server upstream.
+entry client directive process file request level cache output a lazy dictionary.
+
+compress offset prefix suffix key ratio proxy suffix source dog header request proxy number nginx input.
+phase suffix socket key match dictionary output list stream proxy literal.
+response rewrite quick frame length body jumps upstream output key request string content location.
+rewrite filter module header config table window quick rewrite dog.
+process ratio response worker worker rewrite compress index.
+fox literal handler index brown stream a client handler directive server chunk.
+path number cache literal server response directive compress.
+socket array entry decompress input frame client output input nginx module server.
+decompress array module frame value rewrite target pair length file value nginx source number ratio chunk config.
+static jumps pair key nginx source header rewrite proxy config process window frame dog a.
+number location prefix path proxy entry handler proxy rewrite index rewrite encoding location list process phase.
+file string path phase source encoding directive table request frame array stream string.
+
+fox process fox content block directive encoding array level socket.
+body dog encoding chunk list jumps block path buffer index offset ratio rewrite dog.
+file jumps jumps handler brown a boolean stream array entry encoding entry phase.
+header level lazy response the server dictionary filter entry string.
+server request filter a path entry target socket body.
+proxy nginx directive location offset header literal server compress header socket string cache the offset nginx.
+header rewrite worker table list dog block rewrite level window literal quick boolean.
+jumps file server boolean phase array jumps window input offset phase block static response directive.
+table literal header match over number process ratio.
+content table proxy fox module path nginx suffix a value worker config upstream index string.
+server variable static compress jumps length list a index dog key input.
+variable string process literal process directive upstream lazy config jumps output server buffer cache a target decompress.
+
+buffer static location rewrite chunk socket brown header over entry client compress cache content client path.
+match socket length encoding offset lazy length number worker request.
+encoding encoding length entry handler frame worker handler.
+jumps chunk chunk offset module module module prefix.
+cache brown encoding decompress path window jumps ratio jumps level compress dictionary pair output nginx jumps ratio.
+jumps output block lazy encoding pair body file worker request.
+value handler encoding literal table request static dictionary value compress fox process compress fox boolean.
+file proxy request level body dog nginx response compress worker variable server jumps.
+array cache entry module list pair suffix target pair brown dictionary dictionary the stream proxy header variable.
+match worker dictionary key offset lazy array dog process body file encoding match static.
+ratio brown jumps content path the a value.
+worker socket request path source boolean proxy static length value fox nginx client lazy.
+
+chunk directive brown module brown frame a decompress stream entry output body decompress the.
+over header server client chunk prefix lazy proxy index source pair block nginx worker.
+dog nginx path fox match dog cache source source.
+array decompress string header process number frame a over filter cache rewrite socket.
+list rewrite upstream over location socket upstream dictionary compress directive entry chunk.
+input the quick filter path directive string worker source.
+match array block content level list rewrite buffer dictionary handler jumps nginx block.
+stream handler source dog key key input request proxy target.
+record_00000 key=match value=64032 state=open
+record_00001 key=quick value=9265 state=half
+record_00002 key=rewrite value=92939 state=closed
+record_00003 key=stream value=82325 state=open
+record_00004 key=offset value=10188 state=half
+record_00005 key=path value=96014 state=closed
+record_00006 key=dictionary value=69634 state=open
+record_00007 key=compress value=43099 state=half
+record_00008 key=server value=88605 state=closed
+record_00009 key=list value=42637 state=open
+record_00010 key=socket value=2879 state=half
+record_00011 key=suffix value=95745 state=closed
+record_00012 key=entry value=70028 state=open
+record_00013 key=nginx value=27525 state=half
+record_00014 key=level value=35030 state=closed
+record_00015 key=proxy value=54267 state=open
+record_00016 key=header value=27484 state=half
+record_00017 key=file value=37553 state=closed
+record_00018 key=client value=43123 state=open
+record_00019 key=suffix value=87014 state=half
+record_00020 key=array value=82780 state=closed
+record_00021 key=key value=43340 state=open
+record_00022 key=source value=54154 state=half
+record_00023 key=encoding value=65396 state=closed
+record_00024 key=level value=55080 state=open
+record_00025 key=brown value=9962 state=half
+record_00026 key=phase value=453 state=closed
+record_00027 key=directive value=32957 state=open
+record_00028 key=string value=45586 state=half
+record_00029 key=request value=7446 state=closed
+record_00030 key=decompress value=70107 state=open
+record_00031 key=nginx value=11728 state=half
+record_00032 key=handler value=23629 state=closed
+record_00033 key=cache value=11140 state=open
+record_00034 key=source value=15184 state=half
+record_00035 key=variable value=93408 state=closed
+record_00036 key=buffer value=75925 state=open
+record_00037 key=index value=81141 state=half
+record_00038 key=rewrite value=9965 state=closed
+record_00039 key=length value=73332 state=open
+record_00040 key=the value=78578 state=half
+record_00041 key=decompress value=99803 state=closed
+record_00042 key=frame value=4004 state=open
+record_00043 key=cache value=72419 state=half
+record_00044 key=directive value=31145 state=closed
+record_00045 key=dog value=1729 state=open
+record_00046 key=variable value=63943 state=half
+record_00047 key=cache value=37079 state=closed
+record_00048 key=client value=94959 state=open
+record_00049 key=match value=28876 state=half
+record_00050 key=match value=43628 state=closed
+record_00051 key=fox value=22142 state=open
+record_00052 key=match value=15085 state=half
+record_00053 key=variable value=99653 state=closed
+record_00054 key=table value=61754 state=open
+record_00055 key=boolean value=36082 state=half
+record_00056 key=table value=44219 state=closed
+record_00057 key=request value=99521 state=open
+record_00058 key=content value=35676 state=half
+record_00059 key=decompress value=43900 state=closed
+record_00060 key=buffer value=79845 state=open
+record_00061 key=input value=36093 state=half
+record_00062 key=number value=39729 state=closed
+record_00063 key=path value=22921 state=open
+record_00064 key=source value=72152 state=half
+record_00065 key=cache value=70909 state=closed
+record_00066 key=output value=69291 state=open
+record_00067 key=the value=47923 state=half
+record_00068 key=number value=58833 state=closed
+record_00069 key=upstream value=64896 state=open
+record_00070 key=compress value=53319 state=half
+record_00071 key=socket value=69439 state=closed
+record_00072 key=server value=83850 state=open
+record_00073 key=location value=23998 state=half
+record_00074 key=source value=37810 state=closed
+record_00075 key=rewrite value=77630 state=open
+record_00076 key=module value=65368 state=half
+record_00077 key=value value=62720 state=closed
+record_00078 key=source value=8499 state=open
+record_00079 key=directive value=38202 state=half
+record_00080 key=decompress value=29714 state=closed
+record_00081 key=config value=29720 state=open
+record_00082 key=quick value=80094 state=half
+record_00083 key=socket value=45187 state=closed
+record_00084 key=header value=24900 state=open
+record_00085 key=a value=60880 state=half
+record_00086 key=value value=42012 state=closed
+record_00087 key=lazy value=4691 state=open
+record_00088 key=static value=95539 state=half
+record_00089 key=block value=67921 state=closed
+record_00090 key=file value=72642 state=open
+record_00091 key=compress value=80391 state=half
+record_00092 key=number value=25918 state=closed
+record_00093 key=request value=78273 state=open
+record_00094 key=path value=7010 state=half
+record_00095 key=directive value=71281 state=closed
+record_00096 key=directive value=21564 state=open
+record_00097 key=body value=60507 state=half
+record_00098 key=worker value=95731 state=closed
+record_00099 key=header value=62344 state=open
+record_00100 key=index value=34723 state=half
+record_00101 key=body value=7773 state=closed
+record_00102 key=filter value=55263 state=open
+record_00103 key=content value=53011 state=half
+record_00104 key=request value=50770 state=closed
+record_00105 key=worker value=10008 state=open
+record_00106 key=number value=59471 state=half
+record_00107 key=key value=38166 state=closed
+record_00108 key=config value=11601 state=open
+record_00109 key=literal value=26635 state=half
+record_00110 key=location value=90088 state=closed
+record_00111 key=chunk value=34552 state=open
+record_00112 key=static value=74618 state=half
+record_00113 key=decompress value=13371 state=closed
+record_00114 key=variable value=85367 state=open
+record_00115 key=content value=7741 state=half
+record_00116 key=offset value=36834 state=closed
+record_00117 key=dog value=2281 state=open
+record_00118 key=decompress value=62065 state=half
+record_00119 key=lazy value=79834 state=closed
+record_00120 key=socket value=25358 state=open
+record_00121 key=target value=13032 state=half
+record_00122 key=match value=1907 state=closed
+record_00123 key=list value=41910 state=open
+record_00124 key=target value=64089 state=half
+record_00125 key=path value=73069 state=closed
+record_00126 key=filter value=35154 state=open
+record_00127 key=path value=56833 state=half
+record_00128 key=dictionary value=13397 state=closed
+record_00129 key=encoding value=87779 state=open
+record_00130 key=window value=88693 state=half
+record_00131 key=jumps value=63869 state=closed
+record_00132 key=buffer value=16934 state=open
+record_00133 key=module value=99136 state=half
+record_00134 key=number value=4988 state=closed
+record_00135 key=decompress value=86521 state=open
+record_00136 key=body value=15518 state=half
+record_00137 key=ratio value=65606 state=closed
+record_00138 key=boolean value=62940 state=open
+record_00139 key=filter value=92796 state=half
+record_00140 key=literal value=39886 state=closed
+record_00141 key=level value=78823 state=open
+record_00142 key=input value=43955 state=half
+record_00143 key=dictionary value=18380 state=closed
+record_00144 key=filter value=50374 state=open
+record_00145 key=length value=46861 state=half
+record_00146 key=entry value=35484 state=closed
+record_00147 key=static value=57195 state=open
+record_00148 key=list value=28052 state=half
+record_00149 key=source value=58431 state=closed
+record_00150 key=a value=73353 state=open
+record_00151 key=module value=24971 state=half
+record_00152 key=target value=14849 state=closed
+record_00153 key=target value=74514 state=open
+record_00154 key=rewrite value=13540 state=half
+record_00155 key=number value=84207 state=closed
+record_00156 key=level value=87556 state=open
+record_00157 key=compress value=37568 state=half
+record_00158 key=the value=11804 state=closed
+record_00159 key=output value=40172 state=open
+record_00160 key=window value=76125 state=half
+record_00161 key=a value=40771 state=closed
+record_00162 key=string value=76338 state=open
+record_00163 key=length value=67581 state=half
+record_00164 key=level value=2145 state=closed
+record_00165 key=frame value=82446 state=open
+record_00166 key=literal value=42092 state=half
+record_00167 key=phase value=42072 state=closed
+record_00168 key=literal value=34814 state=open
+record_00169 key=the value=8460 state=half
+record_00170 key=match value=28652 state=closed
+record_00171 key=length value=60918 state=open
+record_00172 key=filter value=88544 state=half
+record_00173 key=buffer value=51321 state=closed
+record_00174 key=upstream value=18352 state=open
+record_00175 key=frame value=19324 state=half
+record_00176 key=request value=62272 state=closed
+record_00177 key=suffix value=95651 state=open
+record_00178 key=suffix value=65595 state=half
+record_00179 key=server value=53603 state=closed
+record_00180 key=chunk value=38774 state=open
+record_00181 key=content value=10750 state=half
+record_00182 key=module value=67486 state=closed
+record_00183 key=rewrite value=84478 state=open
+record_00184 key=the value=86386 state=half
+record_00185 key=length value=22677 state=closed
+record_00186 key=number value=17098 state=open
+record_00187 key=length value=97827 state=half
+record_00188 key=key value=6770 state=closed
+record_00189 key=the value=89426 state=open
+record_00190 key=process value=86361 state=half
+record_00191 key=array value=42084 state=closed
+record_00192 key=table value=80837 state=open
+record_00193 key=static value=91601 state=half
+record_00194 key=match value=80357 state=closed
+record_00195 key=dog value=40286 state=open
+record_00196 key=array value=78818 state=half
+record_00197 key=process value=72357 state=closed
+record_00198 key=length value=16136 state=open
+record_00199 key=phase value=20267 state=half
+record_00200 key=brown value=12062 state=closed
+record_00201 key=string value=95117 state=open
+record_00202 key=key value=1524 state=half
+record_00203 key=boolean value=53363 state=closed
+record_00204 key=client value=25731 state=open
+record_00205 key=header value=47848 state=half
+record_00206 key=block value=19282 state=closed
+record_00207 key=window value=25045 state=open
+record_00208 key=variable value=11042 state=half
+record_00209 key=path value=77847 state=closed
+record_00210 key=match value=81750 state=open
+record_00211 key=entry value=21788 state=half
+record_00212 key=literal value=80618 state=closed
+record_00213 key=upstream value=59887 state=open
+record_00214 key=phase value=48335 state=half
+record_00215 key=compress value=18028 state=closed
+record_00216 key=literal value=29683 state=open
+record_00217 key=suffix value=1936 state=half
+record_00218 key=compress value=40884 state=closed
+record_00219 key=socket value=10705 state=open
+record_00220 key=frame value=38646 state=half
+record_00221 key=output value=63887 state=closed
+record_00222 key=entry value=22964 state=open
+record_00223 key=location value=6394 state=half
+record_00224 key=static value=77154 state=closed
+record_00225 key=the value=58851 state=open
+record_00226 key=chunk value=32323 state=half
+record_00227 key=jumps value=15021 state=closed
+record_00228 key=number value=824 state=open
+record_00229 key=quick value=18399 state=half
+record_00230 key=number value=7387 state=closed
+record_00231 key=boolean value=66043 state=open
+record_00232 key=literal value=50000 state=half
+record_00233 key=stream value=70793 state=closed
+record_00234 key=ratio value=73921 state=open
+record_00235 key=over value=62590 state=half
+record_00236 key=dictionary value=49045 state=closed
+record_00237 key=dog value=85235 state=open
+record_00238 key=worker value=4072 state=half
+record_00239 key=offset value=15524 state=closed
+record_00240 key=chunk value=55899 state=open
+record_00241 key=a value=60827 state=half
+record_00242 key=rewrite value=74533 state=closed
+record_00243 key=array value=15122 state=open
+record_00244 key=static value=30018 state=half
+record_00245 key=string value=42742 state=closed
+record_00246 key=encoding value=17362 state=open
+record_00247 key=target value=49050 state=half
+record_00248 key=handler value=81289 state=closed
+record_00249 key=output value=38267 state=open
+record_00250 key=dog value=79444 state=half
+record_00251 key=window value=99562 state=closed
+record_00252 key=boolean value=20504 state=open
+record_00253 key=dictionary value=63554 state=half
+record_00254 key=static value=76436 state=closed
+record_00255 key=stream value=14852 state=open
+record_00256 key=array value=23700 state=half
+record_00257 key=worker value=57780 state=closed
+record_00258 key=the value=47521 state=open
+record_00259 key=variable value=22995 state=half
+record_00260 key=location value=34499 state=closed
+record_00261 key=upstream value=19225 state=open
+record_00262 key=value value=12704 state=half
+record_00263 key=worker value=83300 state=closed
+record_00264 key=worker value=33992 state=open
+record_00265 key=buffer value=90132 state=half
+record_00266 key=compress value=15659 state=closed
+record_00267 key=content value=94763 state=open
+record_00268 key=source value=11160 state=half
+record_00269 key=worker value=6577 state=closed
+record_00270 key=content value=35948 state=open
+record_00271 key=key value=23430 state=half
+record_00272 key=buffer value=70705 state=closed
+record_00273 key=brown value=99889 state=open
+record_00274 key=the value=16041 state=half
+record_00275 key=encoding value=96378 state=closed
+record_00276 key=prefix value=35330 state=open
+record_00277 key=list value=14447 state=half
+record_00278 key=brown value=44681 state=closed
+record_00279 key=module value=91708 state=open
+record_00280 key=list value=97017 state=half
+record_00281 key=phase value=10389 state=closed
+record_00282 key=level value=43580 state=open
+record_00283 key=entry value=7041 state=half
+record_00284 key=file value=44616 state=closed
+record_00285 key=body value=85211 state=open
+record_00286 key=source value=92881 state=half
+record_00287 key=body value=89720 state=closed
+record_00288 key=response value=78820 state=open
+record_00289 key=handler value=13336 state=half
+record_00290 key=lazy value=34823 state=closed
+record_00291 key=request value=60191 state=open
+record_00292 key=config value=69481 state=half
+record_00293 key=buffer value=96333 state=closed
+record_00294 key=length value=20328 state=open
+record_00295 key=a value=42047 state=half
+record_00296 key=location value=85560 state=closed
+record_00297 key=upstream value=74425 state=open
+record_00298 key=directive value=34581 state=half
+record_00299 key=fox value=57739 state=closed
+record_00300 key=cache value=29143 state=open
+record_00301 key=ratio value=7212 state=half
+record_00302 key=ratio value=69426 state=closed
+record_00303 key=buffer value=95425 state=open
+record_00304 key=body value=49305 state=half
+record_00305 key=worker value=64024 state=closed
+record_00306 key=chunk value=63781 state=open
+record_00307 key=proxy value=37801 state=half
+record_00308 key=value value=74927 state=closed
+record_00309 key=request value=93032 state=open
+record_00310 key=quick value=97506 state=half
+record_00311 key=file value=39559 state=closed
+record_00312 key=variable value=14775 state=open
+record_00313 key=prefix value=68006 state=half
+record_00314 key=directive value=32599 state=closed
+record_00315 key=stream value=32574 state=open
+record_00316 key=boolean value=39207 state=half
+record_00317 key=dictionary value=84427 state=closed
+record_00318 key=suffix value=36420 state=open
+record_00319 key=value value=66639 state=half
+record_00320 key=block value=45249 state=closed
+record_00321 key=boolean value=94215 state=open
+record_00322 key=the value=77814 state=half
+record_00323 key=over value=24817 state=closed
+record_00324 key=source value=38643 state=open
+record_00325 key=server value=40092 state=half
+record_00326 key=encoding value=78431 state=closed
+record_00327 key=pair value=64130 state=open
+record_00328 key=config value=38861 state=half
+record_00329 key=filter value=78173 state=closed
+record_00330 key=worker value=90941 state=open
+record_00331 key=decompress value=48969 state=half
+record_00332 key=response value=14578 state=closed
+record_00333 key=body value=26405 state=open
+record_00334 key=handler value=89544 state=half
+record_00335 key=entry value=31405 state=closed
+record_00336 key=a value=8642 state=open
+record_00337 key=module value=37079 state=half
+record_00338 key=client value=88150 state=closed
+record_00339 key=prefix value=55199 state=open
+record_00340 key=path value=96673 state=half
+record_00341 key=brown value=36114 state=closed
+record_00342 key=block value=39246 state=open
+record_00343 key=offset value=85699 state=half
+record_00344 key=offset value=90996 state=closed
+record_00345 key=the value=49988 state=open
+record_00346 key=source value=99037 state=half
+record_00347 key=handler value=11002 state=closed
+record_00348 key=list value=5715 state=open
+record_00349 key=literal value=92913 state=half
+record_00350 key=cache value=98281 state=closed
+record_00351 key=over value=33586 state=open
+record_00352 key=process value=29174 state=half
+record_00353 key=file value=50050 state=closed
+record_00354 key=compress value=80074 state=open
+record_00355 key=suffix value=72385 state=half
+record_00356 key=static value=32630 state=closed
+record_00357 key=array value=47295 state=open
+record_00358 key=content value=83692 state=half
+record_00359 key=encoding value=38720 state=closed
+record_00360 key=request value=53172 state=open
+record_00361 key=the value=24860 state=half
+record_00362 key=table value=9646 state=closed
+record_00363 key=suffix value=12731 state=open
+record_00364 key=config value=26100 state=half
+record_00365 key=the value=75597 state=closed
+record_00366 key=handler value=76747 state=open
+record_00367 key=static value=44136 state=half
+record_00368 key=handler value=90175 state=closed
+record_00369 key=location value=9450 state=open
+record_00370 key=ratio value=50706 state=half
+record_00371 key=encoding value=40701 state=closed
+record_00372 key=dictionary value=2218 state=open
+record_00373 key=array value=97437 state=half
+record_00374 key=offset value=77189 state=closed
+record_00375 key=nginx value=92755 state=open
+record_00376 key=config value=58946 state=half
+record_00377 key=offset value=25959 state=closed
+record_00378 key=the value=48163 state=open
+record_00379 key=number value=6244 state=half
+record_00380 key=value value=18985 state=closed
+record_00381 key=lazy value=77737 state=open
+record_00382 key=static value=53335 state=half
+record_00383 key=handler value=39453 state=closed
+record_00384 key=block value=48402 state=open
+record_00385 key=string value=43142 state=half
+record_00386 key=filter value=11686 state=closed
+record_00387 key=cache value=14522 state=open
+record_00388 key=config value=37777 state=half
+record_00389 key=content value=46143 state=closed
+record_00390 key=string value=46418 state=open
+record_00391 key=a value=8066 state=half
+record_00392 key=lazy value=39513 state=closed
+record_00393 key=level value=73505 state=open
+record_00394 key=a value=6742 state=half
+record_00395 key=list value=62422 state=closed
+record_00396 key=socket value=90353 state=open
+record_00397 key=process value=75198 state=half
+record_00398 key=boolean value=9194 state=closed
+record_00399 key=match value=81767 state=open
+record_00400 key=dog value=13404 state=half
+record_00401 key=input value=1401 state=closed
+record_00402 key=lazy value=69136 state=open
+record_00403 key=string value=25444 state=half
+record_00404 key=offset value=41098 state=closed
+record_00405 key=target value=94275 state=open
+record_00406 key=location value=30684 state=half
+record_00407 key=length value=70147 state=closed
+record_00408 key=a value=24105 state=open
+record_00409 key=source value=70180 state=half
+record_00410 key=literal value=54839 state=closed
+record_00411 key=match value=86325 state=open
+record_00412 key=client value=80530 state=half
+record_00413 key=config value=47826 state=closed
+record_00414 key=array value=60034 state=open
+record_00415 key=handler value=83940 state=half
+record_00416 key=table value=97606 state=closed
+record_00417 key=frame value=93606 state=open
+record_00418 key=target value=68303 state=half
+record_00419 key=path value=80752 state=closed
+
+382fcac949aa6ef0545974583ce568ab793ad1c804a2dfa661090daa196045ab
+7f7dea9023b2d55431d3901b3899f62b03f09e152a1a76b82f683fa0652939b0
+758a85b2594fa5677bf43aff5f4d7aec57c14cd5539b60f57dfa9fb4510b2309
+32294d70359b0dca56a664444600d8cd61999ea22c7dcfbd77d1981c615993b8
+3ff146f67969e1451644b749795d250a522af1c50166e6a80ab1205072c069ab
+36599468331e53b80c0a6f40010dd8ed341cb025477067dd24b302cf647d76db
+690657671f54610f5cb02fda3315c0c0592197732c5e2cbc5acb016545c8bc74
+7dcc87767ed1947f716c5ee401ca04e976085de91f4da8892373ca6d06eecc4a
+27a611d407dc89a21fcfeeb60c40ff0b7f28317527c7398b0892e91465042471
+72f4aa861ce77e602219df73509d08827599b8263f09031b68ab01f1330caae6
+04a7fc3930a00492598c262e001ec3f063d1c19f5ffee0eb566095895ef981ac
+4eb073ea228a30021e55e505192ebad24aeb3de81a2d70c51d46a2f008734994
+48e397e156085a293e5765df5be133721df8b07e320b2f917c5ff2417f19c931
+75e7f1274e8973ea22192fee2399c3bf440242db70735abe254aa99f48c618d9
+458973e243171e1822b8dc111677f1e61caa3e906cf16ea35e96c7357cf09916
+17d2b36f0a0248a11bee47293881e3125762cfb91833a781673a12901598e0e2
+67d4208117a22a68178e1df773514f355f275bb810f6bdd63729354d726a6e85
+297e18721576f9a636000c4c3d276d4667772e07416f02a25f15fb3d1c219290
+601d3a5d1ee2e0f7411f87f87d17cc2e255e202b4691fa3719c25513255f5f9b
+187dcc486aee9787561e56e961dc072a345a889723bd8c5b7149bcb120034292
+36078fa92a68bbf5420be7931b9085c52d3e56a657aac37e0c08b2290ee8a7eb
+4c683cf24f795b0e28491ce55808130c7a1aa5fa6b86feb66bbc95e02a13dc62
+7de9bb827c1594626cc0ed926e2d44055dccdcc534b2399f20e510c01eaebe1f
+6243f4f55b873339093412213992393f2eec74a025dccc7142f22222269f0884
+12e825eb471170ff4a1199cc4988461111b02bce450bea74114d891679630c39
+55b7b0710ea0f6ae69a3210254cc407c2d9db8624db44153752cd7ff5318e272
+06bad4fd53f5317e0684724261694e654899fad97523e1cb06bd1282670a1842
+47bec9e73eb9817d04e455b72ab763e36dfee1fd78a6e175141c06353bdb8be3
+4abd02c83f01becd0b95a50c0d86bcc508d330736111d28b5915d576287163ab
+2c46844b49976ea274e0736c3bb9f3662d1acc2c3a5273d67b330483526d73a5
+0fc37fea6c02e3bb31b5416372d7e4133bbed64c6de736386698cee63a3792a9
+167db31b1679bd26127115513e2e824c5f6c6b784703c43948479e9b55fdf72f
+146f5ac41ab0045719ecf97114ec7703307970b074d54bac5f5b4520611768c8
+47e0544458bc6139379312b218b0809f6bcc536233767e382858a8ed54ba744c
+1d295509048dd0d47a8910a13ca2f8e06f8159391508e6607b4cb3696896f1bc
+0dd8a34909c814b92ec882b36dfccdc37028f59e111591991f09dc9240700529
+7a62e7cb735fff32236b66cb6029ab974fc077d364fae68c1436251f6ebf2096
+45f490a73b44e7d228cfaa6459bba02a2d10536c0ad4ee91217a77256f242f4e
+309de2e34d9abe046a3120693f4703f64f552bee60b73ef21e85b3795bc9dc96
+21b12aee7679808922e5df23219c84bb2ace223a432923ca41ecc5381f880158
+1a104894230cf9ea28eb83a07e0e925c6eab16ab225d6d5023b3b0d06a1d39ff
+24cacac67dc6a0087b34adba3f79cd8755a47a9f216e88a65fcd5b6f232e058c
+226e3c5f733d92a14f65c32221ee15e715e0021825a980e01b4c05711bf94bb7
+0bd9e9ba0f7fb86a0a243f1951aa878212a691b175a70507283b4ae94cb31ba1
+02db0e5e7b8c3ec8346dfbd620b0b97e32620ff64405f951643357ba66c4a7ba
+78dfd90b30229f2c31001a647dc4b45d7d1d862c1d53f2e0726e5f2a2c29f917
+77a06ba744fbde4c73bf72f51e146e314f4e6264231dbbe9751bd00174f52db7
+0c8c855e5d87e4c104bb6ae02c659a8d4285b5c0585f725e624da6a557f7cd0e
+4db77f404a036a9c264c4dba5b8301fa75f6f30527cd09c4063c37465b50d7dc
+188bdb5a05edfe4d4bd2744565cf84e61b1e4c4262208ef64789eace2f969f13
+49a5b0cd1cfa88810417dc043a6d8cb56e30dd0a49fff40a42eee27a5156d9ea
+1cfcbb5e1471273010c3cacc26371fad6d00aa7446b6dd940f8d43d1035f5651
+681be1917e762bfc0041ee416880ed88686ab151349f7265500f5fe0215f9430
+09f9ec6e77112edf091c6f8b29df1359746f4d88374b57703359966c3ea2a6ca
+287437e66601f1c909a8f771340d20ab49dbd53f7f8d40fa12a51e821675f25e
+197b04d75b7acc525afc4a6969796229201ba7d877a8665f50d924585fe136df
+3ad99ba62479cd7938a0d5a4472a1f071e5b291172e52aa82353b6864cf42988
+31d2c730051339de313c206c6274abb459b4e8eb7427ca4f6053441c7a9cbbab
+47e51670112437f060d4765a1ca6406066cc6d51771d15901672de084f4eeabb
+4614c3aa7d39f1d767349a7b2e8a362c73ea9a922f4a22b22c2bec5f77ab67a0
+162076c12d54844007b69d0065fd6ef4617f897b7c1b1c3e57db6a190612bc5f
+380d04165e875d1908f144cb17db70034796e131029a7caf6c6fc67e1e50b1d0
+43c9de3c7a1d57e81c767efa278a5daf6d0ca07057f950fe313480d16df53293
+7ccb894a16a299480cfd51944af6d2351262bc06102637583cfb7ab02233d817
+79afdf8b097d5d17056a95df18956640786c005b7a8b942061a9ffba5fd43e6d
+674e974158ac61631d2dd8102cc411677c5298261283268e60583e204156d84a
+2c9203c9263697fb4a33f35618acb92973b03f6638127ce045c472e264527736
+6210adae34faacce3567238e064f5b0643e0ea26632c879a007ac2547b6c190a
+75e01ed34d07eb1a42dc1f780196219327763ab5430855505819199157ddabc6
+1a38813b73ac55ef373df93d45b630203c11a8a12b5600d61b50f7d460be8d4e
+7e2f2d804b546f381451ec2b0e6805794f3f52524635ae236e3b9fd70c7b14cb
+649221d335ead73a4cd83c7d086b59f53fdee824435ab43e77ef74fd09e9cb8f
+54331e5e680ed88126a832866c8d0f3d20e3a57841847a26606f766435c5d0b2
+4e0871b20c60852414c504d512c0469a0d5b32145e34c5e55aac6db46e5672ed
+6d935e32660d5cd17748d1ae4dbe33b002338fb0071e6cf15e8245dd3ab8e0a4
+3fa44d1a3bc2069a3f3f871c63bf5fb429245595106ebe4d568fb9a875e5f0fd
+4b30ae83691141056bc3e52609f9591051462e8d569a54aa2e2c91516ff87485
+20aa0131793448b75792248b3b9d4e975492ba146cf6a26c342198570998927e
+7fb9931d7069966d241307c35d62a5b5776d3df824ffa2090ae70fd947c17526
+6df2369738de2be50213e48e680227b2657c4c7643800b070b541b303ec4f21f
+73f3f16a146ea19f6b34d8335a5e33415e771ec05e83ffb32c08713f5e42f5ae
+7e0fa2da348cd6de0a6ea3c665c221832c2653a6083dcdef119b0a2359b688dc
+5ed35187038da6b448bb753e0b0e5ec05c6e94eb5ff2ffb54a71f5497f9eb1cd
+0bab4b301ad5424c26f3995742d832bb7feab5450a23069f0187b5ec74b899bc
+03754182071fbf94355a91334cf2c6a256cedd252718d4a94f31b74c48f90732
+5547890b4b765cea47ce2d5a3103948a620d092945d495090784a5b01599c9ab
+238704a17540f83f7c6a2c3c1e7e56f4787ebccf489df7d67afa27d83d4e14fb
+51438a2e2924fbb03b07f4ea07604ced435a5f63622c7f20574e403a525acc9d
+472f81a87fe9611a32e6339127438eb2444d5c4132e3d26f0b0c8f8365a1e71f
+684cd8590d0ff08e117a015560ed7c69078303362a47d214513134bb757d0aa1
+64450c497129c00c6bff8dde56bb213617818cb63a3d0cc87e123c565f3772c3
+314f910b5ebb8277687283373604c573733f1cb93476f0cb6cbaba55571f5a37
+4b5bfd9004641f974955f4c12a37d084365a9fc377aed71577aae115739f6713
+66284bb25f81c78341519a71547292372ddd84312a11c47d747b001e3744ed50
+0e383b890dcca6aa76d1e9f94f5817602066c8523be9901c62f43cfe10d07a73
+67171ca41e5987dc07e68c1530f6bac0165eac5d218619246adc9bad3970b1aa
+15a02d5c4701fe1b53d1c308705b6d35025eec3425e54b2370a7fa44241fc024
+207f8e03164477a06909b4cb7c3cb14c749c344c3b2da56331c524ef05fbe070
+5b4bdc215161295a41e1fd735bc6aacf4ff82b1b2dd622a1457b8f89330c8f02
+7d80e67c199c174356bb3cd71e9773bd692f8cfb30d0e8b0635c93d952eebe85
+381e384c4802225c041deaf3482bf9a13f11de0b2e08c486419e510600d98292
+480b3fad5a819bce731c1fcd3b6c06c531308dfd6ab9f64556d762c0569457ca
+250fbb2e2bc9dc04518ba11125fb8cea25e06a213057aff44ce0d4f73cbdcb8f
+507f387050526a5952c422414aa503da17a0037f0a4592f75db39b653a9f33f2
+2a0b72ef55a6be79362325dd3d8aebef6b87b7791b1ea01677a012422e0ee869
+54bc5d1e1a85880834a5d2d272b3f3fe0457e387261ab64b23b609780427b799
+4b869ff0736e6c4c56882cc806342ada4ae951641bdea2a83588d1e3298ba98a
+1027b8551fb6dcbc1e55cae8127c54e720aa132c7dd0be741387f234422e3df0
+69e4798116e53a772361665f4f87f91e67f4495c56fc6c55562c6d107eac61a2
+673e13a61c7c2c3e1c3ca90e527ee49d08d329bb5f58b88339b9d15c56600c9f
+3bdcc7061b8e799e26d28234466237d55a3fa50c086ce51e253618e4029c33d2
+5d0e21544aae4186764feab778bad10f30f36db53da79f2e47c3a4a17d6d6ad5
+1a8106480cc36e90728fb67b39157fff32865ba012e97f4a1fa3dcf93f006fa9
+35a2e08f5844e7cb13cdedb334b08ced32f436a13f2e9e290d91b627594dc166
+7fd43d5747075c51343dee454de60ece3ad61e563f61be472a1347d357d08339
+3a57403936397c1b7802ec6c07efe402166243600d355f1b2af6ec6339196d9e
+346bbd5b0d5cbc40434b149a7635acf93def4c10296ace342307cd2a552e925d
+648b435b72f33eee3fa8b6375d52f5877175a1ee61da4a73424df6350c5f3395
+3e33818b277dec943c36fccd3e0f159d5054163f4080ab4c3f6e2ba959f484c7
+443952f40f75342a57b3b953584c25206f19852974757fba4e14c811365afc23
+0f5f79b6452fa39c3a9e7a407a6c1dd05019817a3a8399ab15ddc7901358ca27
+2a3fd05d43889f563e94e9bd227d9764635e37ec3ea999eb70b833704d3937e0
+67837abb68eec014128496de3eccd2517903e40c6e710de540476e081188f030
+3550e84e52c3743a1e03b64905b482040dc3d789347b6a6e128876ad3d27615c
+6468fe612914c5c712c4a0e32b1ea0b567c8e13035384b8b02e7adf9384eb7ec
+380d03d55e76b1b2428c4d9109388cb95f9eca6931fae48a4eb239a816e76cf5
+33a25492665e57b93bd1673030cd9efe0b814eba56579b3c1190ac6d3128311d
+45b0802146ac1a454cf0cc4254f2288466421dad7eaa7d4d6b088b327deab683
+3c74930a09619488655e71871b6f8a0f37d0ecdb756e3a7d17c220c649f5b359
+21d1bdfe5110800a12463a1a40908a555169f39002f59cb24b026ba20be87f27
+4cf3df8c1ed987cc5b6271e61c23e1e977c4966d0b700b896905553c5d1f0c01
+214d456a5808433a0675c1fd1d12cc5b3d26794628e4020711412e8a4e566edf
+0c891aa77d34d05e165c0b8a74f99c7d2f910e8a5c519e6b7277b22610511780
+3bdddcde62cf9186295b27181f63adde492bd9eb5deff8d435b9567a1adc7f24
+021f22434a025dcb615be06256e873dd370edebe3141a82f4d88beec4cae9fb8
+5c78105c4e7a377139ce03f704666ac75fec31120b89c5f1022257221c867a46
+40c5984b6c91852545bc77d2585e9fc22c4aa6e15912147e31ff89e17fb52c6b
+4f77664d27dd71fd3b66ad7d520808020d45e56167d64a152599ddf518bb131c
+21e39ff3671a1be6631dcdeb39ba32236f31b570287f05182b277f6d2e1ee33d
+6dd8d172359ecbb54c4ff39315005f094b5f52a45f2ab3a46c7804cb3b82e30f
+0e090c4f74071dbb7f311b7f710470155a5aacaa76fdfb3d1c799ed374aa3d3f
+549b2eef1826784e05a4554567da27e72371e3f50a2cfc010f54aadf7f9e1e55
+65d99fe732912aee5899893147fe1d687c3cbbc4774b80947de6b1bb349eac90
+1d533ced43c4faa5392389654c11633109874cfb11cef7a02ae332822a090acd
+37a42e4a7bdb18cf6d39fd8f7a35ef4e6af2289040453cca019a12bd2a44371d
+647e66982681b8b30e8503853eaa1835111b5fb71c28f02743ae9ee27d412a24
+4135e1ba38769bc872ed846d47914b0d13d6673061108a7c04f404ad305efc65
+2c0c63b2616551b542d774074f0299d933c29e152e188f3f4e6488bd2a4d5880
+3bed5132596dc85a367cba9436bd667e4c93f645060d534a54d722607811f823
+63b9ff6a482fbb4c35b19f9a206553005c2c359d5a7405b17721d5db4e5f59f7
+560b8f5310eebe472a0e30000971659273c359151e0dad1313ddc9cf45ec3f39
+192adb0c4c92fdbc465068ea4917feb646538437150d5af31fce125112149427
+050a95b779eb23f63c862a020c3008592574114f671c6cbe7b2762d456c98b76
+49e31c7d5d6378702d7830f62dd67dcc5cdcf3962dfc2c7b06cc56d351583a21
+7750763f43835f4b65e5578d33d71e3e7002930839032bab7f2804ca1c52aafe
+77581838389e41be1dee3dfc04277abe3beb521356597c200ce4452a5e78cf02
+4d5ebcc206ba8c3d414cfc3e25446bf02f0a6cad5564e9fb543d89891410ac94
+52b232d63127aa04230b05d228ab2ff77eda15fc1fd9947405a15c02249f8a31
+6629a9bf39476eff00c844ba5c180fbc2fb12ee0197c8c963ff1d8ec1ed88ec0
+1b83ef1272c494da4808af13321e2d575b32c47562000c19711a6f927e931440
+6a16b6ab7932caf675ab1aa33461ffaf0dd95507375d45ab4c88f9f234d1a61f
+2ff158500ddd04c72964abed105369d6544968f91f8adeaa56207b136e704891
+0dac603c2fe20a2721089f003cfec9f17b7c0c7f0d18a52f4d04b76070a32720
+675ddfa54405fea76591a8d43de32a640cf42afa723189ba12494ce80a581cb9
+1ec5bafd477747d3680c924c1158f0f26632a8c307e5cea000606e6d3af1b64c
+52f755cf6c22b3965a3c745036f85e786c02347904c32b552951dbe43d3b6aed
+07e90d035555440350e44cb93c692f2c1d9810b06a6fa1fd46f41fa24548e912
+35bdc0473c9a90e1479dc2dc46641e3f56fdde33350712e36369104706abd84e
+7c05ec4d68dcf2d701cb370a448a72715d5f7bde27bd5bb600d01e1c5f68c0ae
+564210710b4596f505b9b49b63002f0c2110ef9b5ee2ba1277262468692064f4
+4dc40517002a50e45a24a8d11cc75f936553baa75c035de9610a9b307f529e15
+0908b6011ae500493075c66a0435720150cfa1cf6f88467b5bcb6e7108bfebcc
+7011a29015c7d56b728c6ef861c9968879b9ecdf1d6e62e83a1f7c706922badf
+671abc650c46bfc578d824ce36588e5d6fea978a12831e6d5e428f9963e1b627
+777dedab6c7eb2d6720f373f44f443990082152d5c3c3d9d76f13db9580b79b0
+59623ef8411439a016d358c10d67f29c2368e6a43bfe2b252bc2a8e878df2dc9
+0437251e4065d6bb5df4b0046b5006cc52ee721e24863a1b6850d55812e6b9e9
+69b779b00c9648095e534d532ef9b4860bbae1821a2b23d2063cbd6a7db77d58
+19865ce3443c482c51a663b302dba6a62299ddc123adbba662faa1963486b19e
+76f717025807c15265251ba46739dfdc0898197639af966236ba198473e1452d
+4a84c8ca539a6bfe3f281b93622a70495031faf80153d8ea27c5eb5432dcec32
+4616e0b407fa6d5f4a227c101dff247659b2ce5c6a0a280540c996a672c18d84
+01320ff87db6636451377ab611596c6205da9ed453f1734c10c8ada266ff6f49
+0be356737a409e1d284cc09f46fa1b644e1c66a32a967f657e85d5ba0492e73b
+488ad4d5129b1128028362a37fc0bc9e469f6a980c0f45613e93e97660c46212
+7d02bd5f3edee8171c575e402becca4946d495262e8c161e6f002371721708a5
+4638c32738945975137d2d587f2bf6661f3de3c4183468e218d1d9d8793500a2
+06bcc9d95467c90369be0f3f3cdb275557f35ca92a48885b7ff0240c6eced172
+4c18cc3370064f4c2e4040097c2c26973699c33128dde1f87f1e75bd28c40c7e
+5f10391a22150ab81372c7835488736e4a52661d67ae200958b9640c73577d55
+74e5929b0bfc3a125c4879e31a3a556a6bbdaf9972539d114f6d01ba7d8c8312
+13f153234889290f24e6bcfd288198f85461d68e634d2fe960849ced225abd1c
+73358ae2403136855ef276af004e0bdc03ec98ac221b46372c9ed65f700c0ddb
+2761de550a4bb2a66fbdb5910fdb7be712a382d32ce1f434266798f15b6a09e9
+0eb0cee279de5ef6762ca6fb6d86e559333b6e3c02c23f6b1ed18b374f0ad7af
+50d64ab324c2573b52ecf55742df4d49524b15eb3f8c218208ebfe663d8adf1d
+683e087b409ef8b404da129108f8f0140f59b5a64aa4ad29016485086e59d0ee
+4aa3f1db515b87255005b7dd276a37362e4ece7137d374771b834d43494577d1
+6fbd5feb79e4769c06273a49796391c677f79c6c213eb3fc1b9a767139d602df
+11569c234d24c6b92972c3402d70b402423a069c6f880dbb4d3da9310b2ef795
+38805cef73556be36d1e3f3c5cc9b41b3e4f883457772de151653ba34d2e7414
+24c6f4a201e6ca8b56fb6ca6149a32e71783e6425482031d239a9043787530f7
+55e1e5e961bd500b53d2344e0d6817e02cf77a002b6aad1068880bb43bb88c09
+50f1c1802fd6e4044513db251a987d91115bc83b20b6a264365f6403309f1cd8
+1e1ec1d875485b5a6165addd5a79ba1f6daa77a05293e19f6ac1b813541c1e26
+01ff7bee2c2147483ccede9a31786fa659ea14a916f2915d0f257c70660ca4d4
+48198ea305e39450201e1335167f0d0c6f319a5d218d88b35309b0fa214217ad
+7a206fe9679368a27eba98cd0c85fbbb3051b86945220e473ed77ac634bd7d65
+04738cf03e29e2d82febf2ca2b90c45a2d4b070e18bc3f5d6ee3ff5a3a91a696
+304fdfe44bf40a8302de456a4e9f339e35f5f26525fce0907cfb216b4b4f37e7
+3ddf45510d3fe8935ebe11b0107b6a681686da4c6f65bf2100e748aa5053915c
+1e6c58375b13927b61f5f7f35b69a4c374c02d1774d07ce223b7155848da56b9
+7673b10c256cc79508a31a650c19e1517717930b2cb6f4421f5e2ffd60a09b21
+5028c51624a350775df7c76b364571ff093f382f15819a676fbfeb3820ebe2d9
+5e7a257125304e2c065c3dc711dbd71478056b342bc1607b24a541ae5d7b194d
+3cba3e2d67481b802f05a5791bb2c30d752398af73fd453d78cce348535dc9ed
+3274115d62200a8b25945e012fa7a6ed27c02a0c39088e3760b0da217ac0de1e
+0c36c2885f1d74fb06eb3b863d90ddf671dc610d3b67d6e11e4c6c3f2b56aba3
+471e708f1f6fe0c36a0d325408635f3133fe8e440d2e2d07528e2d537441ce7c
+0c5b6a8545ae481934ff850c7377f20247b19c875d9b87d60df3229d55657892
