@@ -5,7 +5,28 @@ nginx-zstd-module - two nginx modules for [Zstandard](https://facebook.github.io
 one that compresses a response on the fly, one that serves a `.zst` file
 that is already there.
 
-[![CI](https://github.com/joneum/nginx-zstd-module/actions/workflows/ci.yml/badge.svg)](https://github.com/joneum/nginx-zstd-module/actions/workflows/ci.yml)
+[![Build & Test][build-test-badge]][build-test-link]
+[![FreeBSD][freebsd-badge]][freebsd-link]
+[![Round trip][roundtrip-badge]][roundtrip-link]
+[![A/UBSan][sanitizers-badge]][sanitizers-link]
+[![Valgrind][valgrind-badge]][valgrind-link]
+[![CodeQL][codeql-badge]][codeql-link]
+[![Lint][lint-badge]][lint-link]
+
+[build-test-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/build-test.yml/badge.svg
+[build-test-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/build-test.yml
+[freebsd-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/freebsd.yml/badge.svg
+[freebsd-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/freebsd.yml
+[roundtrip-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/roundtrip.yml/badge.svg
+[roundtrip-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/roundtrip.yml
+[sanitizers-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/sanitizers.yml/badge.svg
+[sanitizers-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/sanitizers.yml
+[valgrind-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/valgrind.yml/badge.svg
+[valgrind-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/valgrind.yml
+[codeql-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/codeql.yml/badge.svg
+[codeql-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/codeql.yml
+[lint-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/lint.yml/badge.svg
+[lint-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/lint.yml
 
 Table of Contents
 =================

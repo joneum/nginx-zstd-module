@@ -1,0 +1,35 @@
+name: Round trip
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Monday morning, so a new nginx release that breaks the module shows
+    # up here and not in somebody's build
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  roundtrip:
+    name: decompressed output matches the original
+    runs-on: ubuntu-latest
+    # a compressed body is binary, which Test::Nginx cannot compare.
+    # Three defects of the filter were found exactly here.
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup
+        with:
+          packages: libzstd-dev zstd
+          test-nginx: 'false'
+
+      - name: Build nginx
+        run: ci/build.sh 1.31.6 "$HOME/nginx"
+
+      - name: Serve many sizes and compare byte for byte
+        run: ci/roundtrip.sh "$HOME/nginx/sbin/nginx"

@@ -21,6 +21,11 @@ cd "$(dirname "$0")"
 
 command -v zstd > /dev/null || { echo "zstd(1) is needed" >&2; exit 2; }
 
+# named, because a bare "> test" reads like a redirection into the
+# test(1) command
+corpus="test"
+compressed="test.zst"
+
 awk 'BEGIN {
 	seed = 20261005
 	nw = split("the quick brown fox jumps over a lazy dog nginx module " \
@@ -73,11 +78,11 @@ function rnd() {
 
 function pick(n) {
 	return int(rnd() % n)
-}' > test
+}' > "$corpus"
 
-zstd -q -19 -f -o test.zst test
+zstd -q -19 -f -o "$compressed" "$corpus"
 
-echo "test      $(wc -c < test | tr -d " ") bytes"
-echo "test.zst  $(wc -c < test.zst | tr -d " ") bytes"
+echo "$corpus      $(wc -c < "$corpus" | tr -d " ") bytes"
+echo "$compressed  $(wc -c < "$compressed" | tr -d " ") bytes"
 echo
 echo "Put those two numbers into t/01-static.t."
