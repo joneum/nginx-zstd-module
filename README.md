@@ -52,8 +52,6 @@ Table of Contents
     * [$zstd_ratio](#zstd_ratio)
 * [Compatibility](#compatibility)
 * [Test Suite](#test-suite)
-* [Source Repository](#source-repository)
-* [Bugs and Patches](#bugs-and-patches)
 * [License](#license)
 
 Description
@@ -77,9 +75,8 @@ Status
 ======
 
 In production use.  The modules build against every nginx release listed
-under [Compatibility](#compatibility) and the test suite runs on each of
-them, on Linux and on FreeBSD, in [continuous
-integration](https://github.com/joneum/nginx-zstd-module/actions).
+under [Compatibility](#compatibility) and the suite runs on each of them,
+on Linux and on FreeBSD.
 
 Synopsis
 ========
@@ -266,18 +263,6 @@ The suite is written against
 ci/build.sh 1.31.6 /tmp/nginx-test
 TEST_NGINX_BINARY=/tmp/nginx-test/sbin/nginx prove -r t/
 ```
-
-Source Repository
-=================
-
-https://github.com/joneum/nginx-zstd-module
-
-Bugs and Patches
-================
-
-Please report them through the [issue
-tracker](https://github.com/joneum/nginx-zstd-module/issues) or send a
-pull request.
 
 License
 =======
