@@ -28,18 +28,6 @@ that is already there.
 [lint-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/lint.yml/badge.svg
 [lint-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/lint.yml
 
-Table of Contents
-=================
-
-* [Name](#name)
-* [Description](#description)
-* [Status](#status)
-* [Synopsis](#synopsis)
-* [Installation](#installation)
-    * [Building as a dynamic module](#building-as-a-dynamic-module)
-    * [Where the library is looked for](#where-the-library-is-looked-for)
-* [Directives](#directives)
-    * [ngx_http_zstd_filter_module](#ngx_http_zstd_filter_module)
         * [zstd](#zstd)
         * [zstd_buffers](#zstd_buffers)
         * [zstd_comp_level](#zstd_comp_level)
