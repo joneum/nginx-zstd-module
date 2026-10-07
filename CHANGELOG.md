@@ -6,6 +6,24 @@ Newest first.  Dates are release dates.
 
 ### Added
 
+- `ci/hostile.sh` puts the filter behind an upstream that misbehaves and in
+  front of a client that walks away.  Everything else here hands it a
+  finished body from disk or from a `return` directive: one buffer,
+  complete, well formed.  Five cases now cover the rest -- a body that
+  arrives in small pieces with pauses, an upstream that announces a hundred
+  thousand bytes and sends two hundred before closing, a client that
+  disconnects while the frame is still open, an empty body with the filter
+  on, and a HEAD request.  The three defects this module already carries
+  fixes for all lived in that code.
+- What the truncated case asserts is not the status.  nginx answers 200
+  there, because the headers were long gone when the upstream died; what
+  must not happen is that the cut-off body is handed over as a complete,
+  decompressible frame.
+- Proven before it was written down: with `zstd off` in the configuration the
+  first case goes red with "the filter did not engage" while everything else
+  stays green, so the check measures this module and not merely that nginx
+  is running.
+
 - A reload test: `ci/reload.sh`, the per-module `ci/reload.conf` beside it,
   and a workflow of its own.  nginx is reloaded eight times in a row and
   after every one of them the module has to answer correctly, the worker

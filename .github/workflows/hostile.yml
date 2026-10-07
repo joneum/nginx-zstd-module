@@ -1,0 +1,39 @@
+name: Hostile
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Monday morning, so a new nginx release that breaks the module shows
+    # up here and not in somebody's build
+    - cron: '13 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hostile:
+    name: a peer that misbehaves
+    runs-on: ubuntu-latest
+    # Every other check hands the filter a finished body from disk or from
+    # a return directive.  This one puts it behind an upstream that drips,
+    # lies about its length or closes early, and in front of a client that
+    # walks away while the frame is still open.
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup
+        with:
+          packages: libzstd-dev zstd
+          test-nginx: 'false'
+
+      - name: Build nginx
+        run: |
+          . .github/versions.env
+          ci/build.sh "$NGINX_VERSION" "$HOME/nginx"
+
+      - name: Drip, lie, close early, walk away
+        run: ci/hostile.sh "$HOME/nginx/sbin/nginx"

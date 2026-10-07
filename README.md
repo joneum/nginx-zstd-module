@@ -8,6 +8,7 @@ that is already there.
 [![Build & Test][build-test-badge]][build-test-link]
 [![FreeBSD][freebsd-badge]][freebsd-link]
 [![Round trip][roundtrip-badge]][roundtrip-link]
+[![Hostile][hostile-badge]][hostile-link]
 [![A/UBSan][sanitizers-badge]][sanitizers-link]
 [![Valgrind][valgrind-badge]][valgrind-link]
 [![Reload][reload-badge]][reload-link]
@@ -20,6 +21,8 @@ that is already there.
 [freebsd-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/freebsd.yml
 [roundtrip-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/roundtrip.yml/badge.svg
 [roundtrip-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/roundtrip.yml
+[hostile-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/hostile.yml/badge.svg
+[hostile-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/hostile.yml
 [sanitizers-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/sanitizers.yml/badge.svg
 [sanitizers-link]: https://github.com/joneum/nginx-zstd-module/actions/workflows/sanitizers.yml
 [valgrind-badge]: https://github.com/joneum/nginx-zstd-module/actions/workflows/valgrind.yml/badge.svg
