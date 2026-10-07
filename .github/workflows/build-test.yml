@@ -14,16 +14,31 @@ permissions:
   contents: read
 
 jobs:
+  pins:
+    name: pins
+    runs-on: ubuntu-latest
+    # A matrix is read before any step of its own job runs, so the release
+    # list has to arrive from an earlier job.  Which releases, and why,
+    # is written down in .github/versions.env.
+    outputs:
+      nginx: ${{ steps.read.outputs.nginx }}
+      version: ${{ steps.read.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: read
+        run: .github/scripts/pins.sh >> "$GITHUB_OUTPUT"
+
   suite:
     name: nginx ${{ matrix.nginx }}
+    needs: pins
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        # 1.22.0 is the oldest release the README promises, 1.30.5 the
-        # current stable and 1.31.6 the current mainline
-        nginx: ['1.22.0', '1.24.0', '1.26.3', '1.28.0', '1.30.5', '1.31.6']
+        nginx: ${{ fromJSON(needs.pins.outputs.nginx) }}
 
     steps:
       - uses: actions/checkout@v7
@@ -40,6 +55,7 @@ jobs:
 
   dynamic:
     name: loadable modules
+    needs: pins
     runs-on: ubuntu-latest
 
     steps:
@@ -50,7 +66,7 @@ jobs:
           packages: libzstd-dev
 
       - name: Build both modules as loadable objects
-        run: ci/build.sh 1.31.6 "$HOME/nginx" dynamic
+        run: ci/build.sh '${{ needs.pins.outputs.version }}' "$HOME/nginx" dynamic
 
       - name: Run the test suite against the loaded modules
         run: |
@@ -64,6 +80,7 @@ jobs:
 
   no-libzstd-on-static:
     name: the static module carries no libzstd
+    needs: pins
     runs-on: ubuntu-latest
     # ngx_http_zstd_static_module never calls into libzstd.  If a change
     # ever makes it do so, the dependency has to be declared, and this
@@ -78,7 +95,7 @@ jobs:
           test-nginx: 'false'
 
       - name: Build both modules as loadable objects
-        run: ci/build.sh 1.31.6 "$HOME/nginx" dynamic
+        run: ci/build.sh '${{ needs.pins.outputs.version }}' "$HOME/nginx" dynamic
 
       - name: ngx_http_zstd_static_module.so must not need libzstd
         run: |

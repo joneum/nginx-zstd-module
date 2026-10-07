@@ -29,7 +29,9 @@ jobs:
           test-nginx: 'false'
 
       - name: Build nginx
-        run: ci/build.sh 1.31.6 "$HOME/nginx"
+        run: |
+          . .github/versions.env
+          ci/build.sh "$NGINX_VERSION" "$HOME/nginx"
 
       - name: Serve many sizes and compare byte for byte
         run: ci/roundtrip.sh "$HOME/nginx/sbin/nginx"
