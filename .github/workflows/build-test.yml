@@ -17,6 +17,7 @@ jobs:
   pins:
     name: pins
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # A matrix is read before any step of its own job runs, so the release
     # list has to arrive from an earlier job.  Which releases, and why,
     # is written down in .github/versions.env.
@@ -34,6 +35,7 @@ jobs:
     name: nginx ${{ matrix.nginx }}
     needs: pins
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false
@@ -57,6 +59,7 @@ jobs:
     name: loadable modules
     needs: pins
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v7
@@ -82,6 +85,7 @@ jobs:
     name: the static module carries no libzstd
     needs: pins
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # ngx_http_zstd_static_module never calls into libzstd.  If a change
     # ever makes it do so, the dependency has to be declared, and this
     # job is where that shows up.

@@ -17,6 +17,7 @@ jobs:
   roundtrip:
     name: decompressed output matches the original
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # a compressed body is binary, which Test::Nginx cannot compare.
     # Three defects of the filter were found exactly here.
 

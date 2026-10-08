@@ -17,6 +17,7 @@ jobs:
   hostile:
     name: a peer that misbehaves
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Every other check hands the filter a finished body from disk or from
     # a return directive.  This one puts it behind an upstream that drips,
     # lies about its length or closes early, and in front of a client that
