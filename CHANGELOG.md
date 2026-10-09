@@ -4,6 +4,12 @@ Newest first.  Dates are release dates.
 
 ## Unreleased
 
+### Changed
+
+- The repository moved from `joneum` to the `sysadmin-labs` organization.
+  Badges and links in the README point to the new address; the old URLs
+  redirect.
+
 ### Added
 
 - `ci/hostile.sh` puts the filter behind an upstream that misbehaves and in
